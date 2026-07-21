@@ -20,6 +20,7 @@ Keys and units must be registered before use. `insert` enforces this at the appl
 | Tool | Description |
 |------|-------------|
 | `new_key(name)` | Register a measurement key |
+| `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
 | `new_unit(name)` | Register a measurement unit |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |

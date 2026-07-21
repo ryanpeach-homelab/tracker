@@ -2,25 +2,25 @@ import os
 import re
 from datetime import datetime, timezone
 
-_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
-_UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-
 from fastmcp import FastMCP
 from sqlalchemy import Column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
+_UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
 
 
 class TrackingKey(SQLModel, table=True):
-    __tablename__ = "tracking_key"
+    __tablename__ = "tracking_key"  # pyright: ignore[reportAssignmentType]
     name: str = Field(primary_key=True)
 
 
 class TrackingUnit(SQLModel, table=True):
-    __tablename__ = "tracking_unit"
+    __tablename__ = "tracking_unit"  # pyright: ignore[reportAssignmentType]
     name: str = Field(primary_key=True)
 
 
@@ -34,7 +34,9 @@ class Tracking(SQLModel, table=True):
         nullable=False,
     )
     # "metadata" is reserved by SQLAlchemy declarative; column is named metadata in DB
-    meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB, nullable=True))
+    meta: dict | None = Field(
+        default=None, sa_column=Column("metadata", JSONB, nullable=True)
+    )
 
 
 SQLModel.metadata.create_all(engine)
@@ -46,12 +48,14 @@ mcp = FastMCP("tracker")
 def get_schema() -> str:
     """Return the column names and types for all tables in the tracking database."""
     with engine.connect() as conn:
-        result = conn.execute(text("""
+        result = conn.execute(
+            text("""
             SELECT table_name, column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_schema = 'public'
             ORDER BY table_name, ordinal_position
-        """))
+        """)
+        )
         rows = result.fetchall()
     if not rows:
         return "No tables found"
@@ -100,6 +104,42 @@ def new_unit(name: str) -> str:
         session.add(TrackingUnit(name=name))
         session.commit()
         return f"Registered unit: {name}"
+
+
+@mcp.tool()
+def rename_key(old_name: str, new_name: str) -> str:
+    """Rename a measurement key, repointing all existing measurements to the new name.
+
+    new_name must be a valid, unregistered key (dot-separated snake_case,
+    e.g. 'workout.bicep_curl'). All tracking rows referencing old_name are
+    moved to new_name atomically.
+    """
+    if not _KEY_RE.match(new_name):
+        raise ValueError(
+            f"Invalid key '{new_name}' — keys must be dot-separated snake_case, e.g. 'workout.bicep_curl'"
+        )
+    if old_name == new_name:
+        raise ValueError("old_name and new_name are the same")
+    with Session(engine) as session:
+        if not session.get(TrackingKey, old_name):
+            raise ValueError(f"Unknown key '{old_name}'")
+        if session.get(TrackingKey, new_name):
+            raise ValueError(f"Key '{new_name}' already exists")
+        # Insert the new key, repoint measurements, then drop the old key.
+        # The tracking.key FK has no ON UPDATE CASCADE, so this ordering
+        # keeps every row referencing a live key throughout.
+        session.add(TrackingKey(name=new_name))
+        session.flush()
+        rows = session.exec(select(Tracking).where(Tracking.key == old_name)).all()
+        for row in rows:
+            row.key = new_name
+            session.add(row)
+        session.flush()
+        session.delete(session.get(TrackingKey, old_name))
+        session.commit()
+    return (
+        f"Renamed key '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
+    )
 
 
 @mcp.tool()
