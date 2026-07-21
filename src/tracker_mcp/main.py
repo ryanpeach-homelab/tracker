@@ -1,6 +1,8 @@
 import os
+from datetime import datetime, timezone
 
 from fastmcp import FastMCP
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
 
@@ -10,6 +12,14 @@ DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
 
 mcp = FastMCP("tracker")
+
+
+class Measurement(BaseModel):
+    """One key/value/unit measurement within a batch insert."""
+
+    key: str
+    value: float
+    unit: str
 
 
 @mcp.tool()
@@ -163,6 +173,63 @@ def insert(
         session.refresh(row)
         where = f" @ ({latitude}, {longitude})" if location else ""
         return f"Inserted id={row.id}: {key}={value} {unit}{where} at {row.created_at}"
+
+
+@mcp.tool()
+def insert_batch(
+    measurements: list[Measurement],
+    latitude: float | None = None,
+    longitude: float | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Insert many measurements that share one location, timestamp, and metadata.
+
+    Each measurement carries its own key/value/unit (all keys and units must be
+    registered first via new_key/new_unit). Every row is written with the same
+    location (from latitude/longitude, WGS 84 decimal degrees), the same
+    created_at timestamp, and the same metadata. The batch is inserted
+    atomically — if any key or unit is unknown, nothing is written.
+    """
+    if not measurements:
+        raise ValueError("measurements must not be empty")
+    if (latitude is None) != (longitude is None):
+        raise ValueError("latitude and longitude must be provided together")
+    # make_point validates the coordinate ranges at the models layer.
+    location = (
+        make_point(latitude, longitude)
+        if latitude is not None and longitude is not None
+        else None
+    )
+    created_at = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        # Validate every distinct key/unit up front so the whole batch fails
+        # fast and atomically rather than part-way through.
+        for key in sorted({m.key for m in measurements}):
+            if not session.get(TrackingKey, key):
+                raise ValueError(
+                    f"Unknown key '{key}' — register it first with new_key"
+                )
+        for unit in sorted({m.unit for m in measurements}):
+            if not session.get(TrackingUnit, unit):
+                raise ValueError(
+                    f"Unknown unit '{unit}' — register it first with new_unit"
+                )
+        session.add_all(
+            [
+                Tracking(
+                    key=m.key,
+                    value=m.value,
+                    unit=m.unit,
+                    location=location,
+                    created_at=created_at,
+                    meta=meta,
+                )
+                for m in measurements
+            ]
+        )
+        session.commit()
+    where = f" @ ({latitude}, {longitude})" if location else ""
+    return f"Inserted {len(measurements)} measurement(s){where} at {created_at}"
 
 
 @mcp.tool()
