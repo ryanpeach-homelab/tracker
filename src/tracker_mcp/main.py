@@ -103,13 +103,21 @@ def new_unit(name: str) -> str:
 
 
 @mcp.tool()
-def list_keys() -> str:
-    """List all registered measurement keys (dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl')."""
+def list_keys(level: int = 0) -> str:
+    """List registered measurement keys, optionally truncated to a hierarchy depth.
+
+    level=0 returns all keys in full. level=1 returns unique top-level segments
+    (e.g. 'workout'), level=2 returns unique two-segment prefixes, and so on.
+    """
     with Session(engine) as session:
         keys = session.exec(select(TrackingKey)).all()
     if not keys:
         return "No keys registered"
-    return "\n".join(k.name for k in keys)
+    names = [k.name for k in keys]
+    if level == 0:
+        return "\n".join(sorted(names))
+    prefixes = sorted({".".join(name.split(".")[:level]) for name in names})
+    return "\n".join(prefixes)
 
 
 @mcp.tool()
