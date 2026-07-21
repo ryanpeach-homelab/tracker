@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timezone
 
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
+_UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 from fastmcp import FastMCP
 from sqlalchemy import Column, text
@@ -61,7 +62,14 @@ def new_key(name: str) -> str:
 
 @mcp.tool()
 def new_unit(name: str) -> str:
-    """Register a new measurement unit. Units must be registered before use in insert."""
+    """Register a new measurement unit. Units must be registered before use in insert.
+
+    Use snake_case. Prefer SI notation where applicable, e.g. 'sec', 'ms', 'kg', 'm', 'count'.
+    """
+    if not _UNIT_RE.match(name):
+        raise ValueError(
+            f"Invalid unit '{name}' — units must be snake_case, e.g. 'sec', 'ms', 'count'"
+        )
     with Session(engine) as session:
         if session.get(TrackingUnit, name):
             raise ValueError(f"Unit '{name}' already exists")
