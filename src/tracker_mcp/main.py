@@ -40,7 +40,10 @@ mcp = FastMCP("tracker")
 
 @mcp.tool()
 def new_key(name: str) -> str:
-    """Register a new measurement key. Keys must be registered before use in insert."""
+    """Register a new measurement key. Keys must be registered before use in insert.
+
+    Use dot-separated snake_case for hierarchical keys, e.g. 'workout.bicep_curl'.
+    """
     with Session(engine) as session:
         if session.get(TrackingKey, name):
             raise ValueError(f"Key '{name}' already exists")
@@ -62,7 +65,7 @@ def new_unit(name: str) -> str:
 
 @mcp.tool()
 def list_keys() -> str:
-    """List all registered measurement keys."""
+    """List all registered measurement keys (dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl')."""
     with Session(engine) as session:
         keys = session.exec(select(TrackingKey)).all()
     if not keys:
@@ -82,7 +85,10 @@ def list_units() -> str:
 
 @mcp.tool()
 def insert(key: str, value: float, unit: str, meta: dict | None = None) -> str:
-    """Insert a measurement. key and unit must be registered first via new_key/new_unit."""
+    """Insert a measurement. key and unit must be registered first via new_key/new_unit.
+
+    Keys use dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl'.
+    """
     with Session(engine) as session:
         if not session.get(TrackingKey, key):
             raise ValueError(f"Unknown key '{key}' — register it first with new_key")
