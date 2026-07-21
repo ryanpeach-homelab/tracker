@@ -9,3 +9,34 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
       - uses: pre-commit/action@v3.0.0
+
+  migrations:
+    # Verify the Alembic migrations and the ORM models stay in sync: apply every
+    # migration to a fresh database, then let Alembic diff the result against the
+    # models' metadata. `alembic check` exits non-zero if a model change has no
+    # corresponding migration.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tracking
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: tracking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URI: postgresql://tracking:password@localhost:5432/tracking
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+      - name: Check migrations match models
+        run: uv run alembic check
