@@ -1,5 +1,7 @@
 # tracker-mcp
 
+> This project is entirely vibe coded.
+
 A minimal [FastMCP](https://github.com/jlowin/fastmcp) server for logging and querying measurements in PostgreSQL.
 
 ## Schema
