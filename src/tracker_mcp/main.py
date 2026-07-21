@@ -2,25 +2,25 @@ import os
 import re
 from datetime import datetime, timezone
 
-_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
-_UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-
 from fastmcp import FastMCP
 from sqlalchemy import Column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
+_UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
 
 
 class TrackingKey(SQLModel, table=True):
-    __tablename__ = "tracking_key"
+    __tablename__ = "tracking_key"  # pyright: ignore[reportAssignmentType]
     name: str = Field(primary_key=True)
 
 
 class TrackingUnit(SQLModel, table=True):
-    __tablename__ = "tracking_unit"
+    __tablename__ = "tracking_unit"  # pyright: ignore[reportAssignmentType]
     name: str = Field(primary_key=True)
 
 
@@ -34,7 +34,9 @@ class Tracking(SQLModel, table=True):
         nullable=False,
     )
     # "metadata" is reserved by SQLAlchemy declarative; column is named metadata in DB
-    meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB, nullable=True))
+    meta: dict | None = Field(
+        default=None, sa_column=Column("metadata", JSONB, nullable=True)
+    )
 
 
 SQLModel.metadata.create_all(engine)
@@ -46,12 +48,14 @@ mcp = FastMCP("tracker")
 def get_schema() -> str:
     """Return the column names and types for all tables in the tracking database."""
     with engine.connect() as conn:
-        result = conn.execute(text("""
+        result = conn.execute(
+            text("""
             SELECT table_name, column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_schema = 'public'
             ORDER BY table_name, ordinal_position
-        """))
+        """)
+        )
         rows = result.fetchall()
     if not rows:
         return "No tables found"
@@ -133,7 +137,9 @@ def rename_key(old_name: str, new_name: str) -> str:
         session.flush()
         session.delete(session.get(TrackingKey, old_name))
         session.commit()
-    return f"Renamed key '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
+    return (
+        f"Renamed key '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
+    )
 
 
 @mcp.tool()
