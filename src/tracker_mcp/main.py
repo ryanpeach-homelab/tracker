@@ -2,7 +2,8 @@ import os
 from datetime import datetime, timezone
 
 from fastmcp import FastMCP
-from sqlalchemy import text
+from sqlalchemy import Column, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 DATABASE_URI = os.environ["DATABASE_URI"]
@@ -18,6 +19,8 @@ class Tracking(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    # "metadata" is reserved by SQLAlchemy declarative; column is named metadata in DB
+    meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB, nullable=True))
 
 
 SQLModel.metadata.create_all(engine)
@@ -26,10 +29,10 @@ mcp = FastMCP("tracker")
 
 
 @mcp.tool()
-def insert(key: str, value: float, unit: str) -> str:
+def insert(key: str, value: float, unit: str, meta: dict | None = None) -> str:
     """Insert a measurement into the tracking table."""
     with Session(engine) as session:
-        row = Tracking(key=key, value=value, unit=unit)
+        row = Tracking(key=key, value=value, unit=unit, meta=meta)
         session.add(row)
         session.commit()
         session.refresh(row)
