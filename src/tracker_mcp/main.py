@@ -4,7 +4,7 @@ from fastmcp import FastMCP
 from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
 
-from tracker_mcp.models import Tracking, TrackingKey, TrackingUnit
+from tracker_mcp.models import Tracking, TrackingKey, TrackingUnit, make_point
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
@@ -134,14 +134,24 @@ def insert(
     key: str,
     value: float,
     unit: str,
-    location: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
     meta: dict | None = None,
 ) -> str:
     """Insert a measurement. key and unit must be registered first via new_key/new_unit.
 
     Keys use dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl'.
-    location is an optional free-text label for where the measurement was taken.
+    Optionally attach a geocoordinate for where the measurement was taken by
+    passing both latitude and longitude (WGS 84 decimal degrees).
     """
+    if (latitude is None) != (longitude is None):
+        raise ValueError("latitude and longitude must be provided together")
+    # make_point validates the coordinate ranges at the models layer.
+    location = (
+        make_point(latitude, longitude)
+        if latitude is not None and longitude is not None
+        else None
+    )
     with Session(engine) as session:
         if not session.get(TrackingKey, key):
             raise ValueError(f"Unknown key '{key}' — register it first with new_key")
@@ -151,7 +161,7 @@ def insert(
         session.add(row)
         session.commit()
         session.refresh(row)
-        where = f" @ {row.location}" if row.location else ""
+        where = f" @ ({latitude}, {longitude})" if location else ""
         return f"Inserted id={row.id}: {key}={value} {unit}{where} at {row.created_at}"
 
 

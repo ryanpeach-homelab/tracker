@@ -18,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # PostGIS image so the location geography column and CREATE EXTENSION
+        # postgis in the migrations work.
+        image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: tracking
           POSTGRES_PASSWORD: password

@@ -1,6 +1,7 @@
 import os
 from logging.config import fileConfig
 
+from geoalchemy2 import alembic_helpers
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
@@ -22,6 +23,15 @@ if database_uri:
 
 target_metadata = SQLModel.metadata
 
+# GeoAlchemy2's helpers teach autogenerate to render spatial column types and to
+# ignore PostGIS-managed objects (e.g. the spatial_ref_sys table) so they don't
+# show up as spurious drift.
+_geo_kwargs = {
+    "render_item": alembic_helpers.render_item,
+    "include_object": alembic_helpers.include_object,
+    "process_revision_directives": alembic_helpers.writer,
+}
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode, emitting SQL without a DB connection."""
@@ -32,6 +42,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        **_geo_kwargs,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -49,6 +60,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            **_geo_kwargs,
         )
         with context.begin_transaction():
             context.run_migrations()
