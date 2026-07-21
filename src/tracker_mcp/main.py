@@ -43,6 +43,30 @@ mcp = FastMCP("tracker")
 
 
 @mcp.tool()
+def get_schema() -> str:
+    """Return the column names and types for all tables in the tracking database."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT table_name, column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+            ORDER BY table_name, ordinal_position
+        """))
+        rows = result.fetchall()
+    if not rows:
+        return "No tables found"
+    out: list[str] = []
+    current_table = None
+    for table_name, column_name, data_type, is_nullable in rows:
+        if table_name != current_table:
+            out.append(f"\n{table_name}")
+            current_table = table_name
+        nullable = "" if is_nullable == "YES" else " NOT NULL"
+        out.append(f"  {column_name}  {data_type}{nullable}")
+    return "\n".join(out).strip()
+
+
+@mcp.tool()
 def new_key(name: str) -> str:
     """Register a new measurement key. Keys must be registered before use in insert.
 
