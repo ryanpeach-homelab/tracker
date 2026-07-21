@@ -1,5 +1,8 @@
 import os
+import re
 from datetime import datetime, timezone
+
+_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
 
 from fastmcp import FastMCP
 from sqlalchemy import Column, text
@@ -44,6 +47,10 @@ def new_key(name: str) -> str:
 
     Use dot-separated snake_case for hierarchical keys, e.g. 'workout.bicep_curl'.
     """
+    if not _KEY_RE.match(name):
+        raise ValueError(
+            f"Invalid key '{name}' — keys must be dot-separated snake_case, e.g. 'workout.bicep_curl'"
+        )
     with Session(engine) as session:
         if session.get(TrackingKey, name):
             raise ValueError(f"Key '{name}' already exists")
