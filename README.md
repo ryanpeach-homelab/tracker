@@ -28,7 +28,7 @@ Keys and units must be registered before use. `insert` enforces this at the appl
 
 ```sh
 uv sync
-DATABASE_URI=postgresql://tracking:password@127.0.0.1:5432/tracking uv run tracker-mcp
+DATABASE_URI=postgresql://tracking:password@127.0.0.1:5432/tracking uv run tracker
 ```
 
 Tables are created automatically on first start via `SQLModel.metadata.create_all`.

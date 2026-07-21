@@ -1,5 +1,5 @@
 [project]
-name = "tracker-mcp"
+name = "tracker"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tracker-mcp = "tracker_mcp.main:main"
+tracker = "tracker_mcp.main:main"
 
 [build-system]
 requires = ["hatchling"]
