@@ -1,4 +1,4 @@
-# tracker-mcp
+# tracker
 
 > This project is entirely vibe coded.
 
