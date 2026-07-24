@@ -26,6 +26,7 @@ Key/unit name formats (dot-separated snake_case keys, snake_case units) are vali
 | `new_key(name)` | Register a measurement key |
 | `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
 | `new_unit(name)` | Register a measurement unit |
+| `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |
 | `insert(key, value, unit, latitude?, longitude?, meta?)` | Append a measurement row |
