@@ -21,16 +21,29 @@ Key/unit name formats (dot-separated snake_case keys, snake_case units) are vali
 
 ## Tools
 
+Each tool carries [MCP tool annotations](https://modelcontextprotocol.io/docs/concepts/tools#tool-annotations)
+so clients can tell read tools from write tools. Read tools set `readOnlyHint`;
+write tools clear it and describe their behaviour with `destructiveHint` and
+`idempotentHint`.
+
+### Read
+
+| Tool | Description |
+|------|-------------|
+| `get_schema()` | List every table's columns and types |
+| `list_keys(level?)` | List all registered keys |
+| `list_units()` | List all registered units |
+| `query(sql)` | Read-only `SELECT` against the tracking database |
+
+### Write
+
 | Tool | Description |
 |------|-------------|
 | `new_key(name)` | Register a measurement key |
-| `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
+| `rename_key(old_name, new_name)` | Rename a key, repointing its measurements (destructive) |
 | `new_unit(name)` | Register a measurement unit |
-| `list_keys()` | List all registered keys |
-| `list_units()` | List all registered units |
 | `insert(key, value, unit, latitude?, longitude?, meta?)` | Append a measurement row |
 | `insert_batch(measurements, latitude?, longitude?, meta?)` | Append many rows sharing one location, timestamp, and metadata |
-| `query(sql)` | Read-only `SELECT` against the tracking database |
 
 ## Setup
 
