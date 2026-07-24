@@ -23,12 +23,30 @@ if database_uri:
 
 target_metadata = SQLModel.metadata
 
+# Names of the tables our models define. Autogenerate should only manage these.
+_model_table_names = {table.name for table in target_metadata.tables.values()}
+
+
+def _include_object(obj, name, type_, reflected, compare_to):
+    """Limit autogenerate/`alembic check` comparison to our own tables.
+
+    The postgis Docker image loads postgis_topology and postgis_tiger_geocoder
+    into the database, which create many tables (topology, layer, spatial_ref_sys,
+    and the tiger geocoder tables). None of those belong to our models, so
+    without this filter `alembic check` reports them as spurious "removed table"
+    drift. For non-table objects, defer to GeoAlchemy2's own handling.
+    """
+    if type_ == "table" and name not in _model_table_names:
+        return False
+    return alembic_helpers.include_object(obj, name, type_, reflected, compare_to)
+
+
 # GeoAlchemy2's helpers teach autogenerate to render spatial column types and to
-# ignore PostGIS-managed objects (e.g. the spatial_ref_sys table) so they don't
-# show up as spurious drift.
+# handle spatial columns/indexes; _include_object scopes comparison to our
+# tables so PostGIS-managed tables don't show up as drift.
 _geo_kwargs = {
     "render_item": alembic_helpers.render_item,
-    "include_object": alembic_helpers.include_object,
+    "include_object": _include_object,
     "process_revision_directives": alembic_helpers.writer,
 }
 
