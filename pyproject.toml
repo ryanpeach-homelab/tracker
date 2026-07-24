@@ -6,6 +6,8 @@ dependencies = [
     "fastmcp>=2.0",
     "sqlmodel>=0.0.21",
     "psycopg2-binary>=2.9",
+    "alembic>=1.13",
+    "geoalchemy2>=0.15",
 ]
 
 [project.scripts]
@@ -38,3 +40,6 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
+# Alembic migration scripts are generated code; their canonical
+# `sqlmodel.sql.sqltypes.AutoString()` form doesn't resolve under basedpyright.
+exclude = ["**/__pycache__", ".venv", "alembic/versions"]
