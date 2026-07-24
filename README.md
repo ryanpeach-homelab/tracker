@@ -30,6 +30,8 @@ Key/unit name formats (dot-separated snake_case keys, snake_case units) are vali
 | `list_units()` | List all registered units |
 | `insert(key, value, unit, latitude?, longitude?, meta?)` | Append a measurement row |
 | `insert_batch(measurements, latitude?, longitude?, meta?)` | Append many rows sharing one location, timestamp, and metadata |
+| `update_item(id, key?, value?, unit?, latitude?, longitude?, meta?)` | Update fields of an existing measurement by `id` (only provided fields change) |
+| `delete_item(id)` | Delete a measurement by `id` |
 | `query(sql)` | Read-only `SELECT` against the tracking database |
 
 ## Setup
