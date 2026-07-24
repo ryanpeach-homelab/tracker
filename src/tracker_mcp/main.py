@@ -5,7 +5,7 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 from sqlalchemy import text
-from sqlmodel import Session, create_engine, select
+from sqlmodel import Session, col, create_engine, select, update
 
 from tracker_mcp.models import Tracking, TrackingKey, TrackingUnit, make_point
 
@@ -130,16 +130,17 @@ def rename_key(old_name: str, new_name: str) -> str:
         # TrackingKey validates new_name's format at the ORM layer.
         session.add(TrackingKey(name=new_name))
         session.flush()
-        rows = session.exec(select(Tracking).where(Tracking.key == old_name)).all()
-        for row in rows:
-            row.key = new_name
-            session.add(row)
+        # A single bulk UPDATE repoints every measurement in one round-trip.
+        # Tracking.key has no ORM @validates, and new_name was already validated
+        # when the TrackingKey above was constructed, so nothing is bypassed.
+        result = session.exec(
+            update(Tracking).where(col(Tracking.key) == old_name).values(key=new_name)
+        )
+        count = result.rowcount
         session.flush()
         session.delete(session.get(TrackingKey, old_name))
         session.commit()
-    return (
-        f"Renamed key '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
-    )
+    return f"Renamed key '{old_name}' → '{new_name}' ({count} measurement(s) updated)"
 
 
 @mcp.tool(
