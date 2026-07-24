@@ -233,6 +233,70 @@ def insert_batch(
 
 
 @mcp.tool()
+def update_item(
+    id: int,
+    key: str | None = None,
+    value: float | None = None,
+    unit: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Update fields of an existing measurement identified by id.
+
+    Only the provided fields are changed; any argument left as None is untouched
+    (so this cannot clear location or metadata — omit them to keep them). key and
+    unit, if given, must already be registered via new_key/new_unit. Pass both
+    latitude and longitude together to move the measurement's geocoordinate
+    (WGS 84 decimal degrees).
+    """
+    if (latitude is None) != (longitude is None):
+        raise ValueError("latitude and longitude must be provided together")
+    with Session(engine) as session:
+        row = session.get(Tracking, id)
+        if row is None:
+            raise ValueError(f"Unknown measurement id={id}")
+        if key is not None:
+            if not session.get(TrackingKey, key):
+                raise ValueError(
+                    f"Unknown key '{key}' — register it first with new_key"
+                )
+            row.key = key
+        if value is not None:
+            row.value = value
+        if unit is not None:
+            if not session.get(TrackingUnit, unit):
+                raise ValueError(
+                    f"Unknown unit '{unit}' — register it first with new_unit"
+                )
+            row.unit = unit
+        if latitude is not None and longitude is not None:
+            # make_point validates the coordinate ranges at the models layer.
+            row.location = make_point(latitude, longitude)
+        if meta is not None:
+            row.meta = meta
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return (
+            f"Updated id={row.id}: {row.key}={row.value} {row.unit} at {row.created_at}"
+        )
+
+
+@mcp.tool()
+def delete_item(id: int) -> str:
+    """Delete a measurement identified by id."""
+    with Session(engine) as session:
+        row = session.get(Tracking, id)
+        if row is None:
+            raise ValueError(f"Unknown measurement id={id}")
+        key, value, unit = row.key, row.value, row.unit
+        session.delete(row)
+        session.commit()
+    return f"Deleted id={id}: {key}={value} {unit}"
+
+
+@mcp.tool()
 def query(sql: str) -> str:
     """Execute a read-only SELECT query against the tracking database."""
     if not sql.strip().upper().startswith("SELECT"):
