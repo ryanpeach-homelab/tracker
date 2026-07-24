@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 from fastmcp import FastMCP
 from pydantic import BaseModel
-from sqlalchemy import text
-from sqlmodel import Session, create_engine, select
+from sqlalchemy import text, update
+from sqlmodel import Session, col, create_engine, select
 
 from tracker_mcp.models import Tracking, TrackingKey, TrackingUnit, make_point
 
@@ -99,15 +99,14 @@ def rename_key(old_name: str, new_name: str) -> str:
         # TrackingKey validates new_name's format at the ORM layer.
         session.add(TrackingKey(name=new_name))
         session.flush()
-        rows = session.exec(select(Tracking).where(Tracking.key == old_name)).all()
-        for row in rows:
-            row.key = new_name
-            session.add(row)
+        rowcount = session.exec(
+            update(Tracking).where(col(Tracking.key) == old_name).values(key=new_name)
+        ).rowcount
         session.flush()
         session.delete(session.get(TrackingKey, old_name))
         session.commit()
     return (
-        f"Renamed key '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
+        f"Renamed key '{old_name}' → '{new_name}' ({rowcount} measurement(s) updated)"
     )
 
 
@@ -131,15 +130,14 @@ def rename_unit(old_name: str, new_name: str) -> str:
         # TrackingUnit validates new_name's format at the ORM layer.
         session.add(TrackingUnit(name=new_name))
         session.flush()
-        rows = session.exec(select(Tracking).where(Tracking.unit == old_name)).all()
-        for row in rows:
-            row.unit = new_name
-            session.add(row)
+        rowcount = session.exec(
+            update(Tracking).where(col(Tracking.unit) == old_name).values(unit=new_name)
+        ).rowcount
         session.flush()
         session.delete(session.get(TrackingUnit, old_name))
         session.commit()
     return (
-        f"Renamed unit '{old_name}' → '{new_name}' ({len(rows)} measurement(s) updated)"
+        f"Renamed unit '{old_name}' → '{new_name}' ({rowcount} measurement(s) updated)"
     )
 
 
