@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
@@ -22,7 +23,13 @@ class Measurement(BaseModel):
     unit: str
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get schema",
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def get_schema() -> str:
     """Return the column names and types for all tables in the tracking database."""
     with engine.connect() as conn:
@@ -48,7 +55,15 @@ def get_schema() -> str:
     return "\n".join(out).strip()
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="New key",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def new_key(name: str) -> str:
     """Register a new measurement key. Keys must be registered before use in insert.
 
@@ -63,7 +78,15 @@ def new_key(name: str) -> str:
         return f"Registered key: {name}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="New unit",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def new_unit(name: str) -> str:
     """Register a new measurement unit. Units must be registered before use in insert.
 
@@ -78,7 +101,15 @@ def new_unit(name: str) -> str:
         return f"Registered unit: {name}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Rename key",
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def rename_key(old_name: str, new_name: str) -> str:
     """Rename a measurement key, repointing all existing measurements to the new name.
 
@@ -111,7 +142,13 @@ def rename_key(old_name: str, new_name: str) -> str:
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List keys",
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def list_keys(level: int = 0) -> str:
     """List registered measurement keys, optionally truncated to a hierarchy depth.
 
@@ -129,7 +166,13 @@ def list_keys(level: int = 0) -> str:
     return "\n".join(prefixes)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List units",
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def list_units() -> str:
     """List all registered measurement units."""
     with Session(engine) as session:
@@ -139,7 +182,15 @@ def list_units() -> str:
     return "\n".join(u.name for u in units)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Insert",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def insert(
     key: str,
     value: float,
@@ -175,7 +226,15 @@ def insert(
         return f"Inserted id={row.id}: {key}={value} {unit}{where} at {row.created_at}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Insert batch",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def insert_batch(
     measurements: list[Measurement],
     latitude: float | None = None,
@@ -232,7 +291,13 @@ def insert_batch(
     return f"Inserted {len(measurements)} measurement(s){where} at {created_at}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Query",
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def query(sql: str) -> str:
     """Execute a read-only SELECT query against the tracking database."""
     if not sql.strip().upper().startswith("SELECT"):
