@@ -4,7 +4,7 @@ from typing import Any
 
 from geoalchemy2 import Geography
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import Column
+from sqlalchemy import CheckConstraint, Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import validates
 from sqlmodel import Field, SQLModel
@@ -14,6 +14,74 @@ from sqlmodel import Field, SQLModel
 # the MCP tool entrypoints.
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
 _UNIT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# A tracking key can carry an optional tracking *frequency* — how often the
+# measurement is meant to be recorded. It's stored as a (unit, count) pair so
+# that the parametric "every n weeks" case is captured exactly, without the
+# month-vs-30-days lossiness of a raw INTERVAL/timedelta. daily/weekly/monthly
+# are just count=1; "n weekly" is unit='week', count=n.
+FREQUENCY_UNITS = ("day", "week", "month")
+# Single-word adverbs map to a period unit with count 1.
+_FREQUENCY_ADVERBS = {"daily": "day", "weekly": "week", "monthly": "month"}
+# Plural/singular nouns map to their period unit ("2 weeks" -> week).
+_FREQUENCY_NOUNS = {
+    "day": "day",
+    "days": "day",
+    "week": "week",
+    "weeks": "week",
+    "month": "month",
+    "months": "month",
+}
+
+
+def parse_frequency(value: str) -> tuple[str, int]:
+    """Parse a friendly frequency string into a ``(unit, count)`` pair.
+
+    Accepts, case-insensitively:
+
+    * ``"daily"`` / ``"weekly"`` / ``"monthly"`` → count 1
+    * ``"n weekly"`` (and ``"n daily"`` / ``"n monthly"``) → count n
+    * ``"n days"`` / ``"n weeks"`` / ``"n months"`` (singular or plural)
+    * an optional leading ``"every"`` (e.g. ``"every 2 weeks"``)
+
+    ``unit`` is one of :data:`FREQUENCY_UNITS`; ``count`` is a positive int.
+    """
+    tokens = value.strip().lower().split()
+    if tokens and tokens[0] == "every":
+        tokens = tokens[1:]
+
+    if len(tokens) == 1:
+        (word,) = tokens
+        if word in _FREQUENCY_ADVERBS:
+            return _FREQUENCY_ADVERBS[word], 1
+        if word in _FREQUENCY_NOUNS:  # "every week"
+            return _FREQUENCY_NOUNS[word], 1
+    elif len(tokens) == 2:
+        count_str, word = tokens
+        if count_str.isdigit():
+            count = int(count_str)
+            if count < 1:
+                raise ValueError("frequency count must be a positive integer")
+            if word in _FREQUENCY_ADVERBS:  # "3 weekly"
+                return _FREQUENCY_ADVERBS[word], count
+            if word in _FREQUENCY_NOUNS:  # "3 weeks"
+                return _FREQUENCY_NOUNS[word], count
+
+    raise ValueError(
+        f"Invalid frequency '{value}' — use 'daily', 'weekly', 'monthly', "
+        "or 'n weekly' / 'every n weeks' (n a positive integer)"
+    )
+
+
+def format_frequency(unit: str, count: int) -> str:
+    """Render a ``(unit, count)`` frequency back into a friendly string.
+
+    The inverse of :func:`parse_frequency` for the canonical forms: count 1
+    becomes the adverb (``"weekly"``), higher counts become ``"every n weeks"``.
+    """
+    if count == 1:
+        return {"day": "daily", "week": "weekly", "month": "monthly"}[unit]
+    return f"every {count} {unit}s"
 
 
 def make_point(latitude: float, longitude: float) -> WKTElement:
@@ -32,7 +100,18 @@ def make_point(latitude: float, longitude: float) -> WKTElement:
 
 class TrackingKey(SQLModel, table=True):
     __tablename__ = "tracking_key"  # pyright: ignore[reportAssignmentType]
+    # A frequency is either fully set (both columns) or fully absent (both NULL).
+    __table_args__ = (
+        CheckConstraint(
+            "(frequency_unit IS NULL) = (frequency_count IS NULL)",
+            name="ck_tracking_key_frequency_both_or_neither",
+        ),
+    )
     name: str = Field(primary_key=True)
+    # Optional tracking frequency, stored as a period unit + positive count.
+    # See parse_frequency/format_frequency for the friendly-string mapping.
+    frequency_unit: str | None = Field(default=None)
+    frequency_count: int | None = Field(default=None)
 
     @validates("name")
     def _validate_name(self, _key: str, value: str) -> str:
@@ -41,6 +120,27 @@ class TrackingKey(SQLModel, table=True):
                 f"Invalid key '{value}' — keys must be dot-separated snake_case, e.g. 'workout.bicep_curl'"
             )
         return value
+
+    @validates("frequency_unit")
+    def _validate_frequency_unit(self, _key: str, value: str | None) -> str | None:
+        if value is not None and value not in FREQUENCY_UNITS:
+            raise ValueError(
+                f"Invalid frequency unit '{value}' — must be one of {FREQUENCY_UNITS}"
+            )
+        return value
+
+    @validates("frequency_count")
+    def _validate_frequency_count(self, _key: str, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("frequency_count must be a positive integer")
+        return value
+
+    @property
+    def frequency(self) -> str | None:
+        """The friendly frequency label (e.g. 'weekly'), or None if unset."""
+        if self.frequency_unit is None or self.frequency_count is None:
+            return None
+        return format_frequency(self.frequency_unit, self.frequency_count)
 
 
 class TrackingUnit(SQLModel, table=True):

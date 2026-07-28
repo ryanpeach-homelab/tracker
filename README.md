@@ -7,7 +7,7 @@ A minimal [FastMCP](https://github.com/jlowin/fastmcp) server for logging and qu
 ## Schema
 
 ```
-tracking_key  (name TEXT PK)
+tracking_key  (name TEXT PK, frequency_unit TEXT NULL, frequency_count INT NULL)
 tracking_unit (name TEXT PK)
 tracking      (id SERIAL PK, key → tracking_key, value FLOAT, unit → tracking_unit,
                location geography(Point,4326) NULL, created_at TIMESTAMPTZ, metadata JSONB)
@@ -17,13 +17,16 @@ Keys and units must be registered before use. `insert` enforces this at the appl
 
 Key/unit name formats (dot-separated snake_case keys, snake_case units) are validated on the ORM models themselves via SQLAlchemy `@validates`, so every write path — MCP tools or direct ORM use — is checked, not just the tool entrypoints.
 
+A key can carry an optional **tracking frequency** — how often the measurement is meant to be recorded — stored as a `(frequency_unit, frequency_count)` pair (`day`/`week`/`month` × a positive integer). This captures the parametric "every n weeks" case exactly, without the month-vs-30-days lossiness of a raw interval; `daily`/`weekly`/`monthly` are just count 1, and "n weekly" is `('week', n)`. A `CHECK` constraint keeps the pair both-set-or-both-null. Friendly strings (`'daily'`, `'weekly'`, `'monthly'`, `'every 2 weeks'`, `'3 weekly'`) are converted by `parse_frequency`/`format_frequency` in `tracker_mcp.models`, and `TrackingKey.frequency` renders the label back.
+
 `location` is an optional [PostGIS](https://postgis.net/) `geography(Point,4326)` — a WGS 84 geocoordinate for where a measurement was taken (requires the `postgis` extension, which the migration enables). Build one with `make_point(latitude, longitude)` from `tracker_mcp.models`, which validates the coordinate ranges; `insert` takes plain `latitude`/`longitude` decimal degrees.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `new_key(name)` | Register a measurement key |
+| `new_key(name, frequency?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) |
+| `set_key_frequency(name, frequency)` | Set, change, or clear a key's tracking frequency (null/empty clears it) |
 | `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
 | `new_unit(name)` | Register a measurement unit |
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |

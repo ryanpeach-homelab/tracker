@@ -6,7 +6,13 @@ from pydantic import BaseModel
 from sqlalchemy import text, update
 from sqlmodel import Session, col, create_engine, select
 
-from tracker_mcp.models import Tracking, TrackingKey, TrackingUnit, make_point
+from tracker_mcp.models import (
+    Tracking,
+    TrackingKey,
+    TrackingUnit,
+    make_point,
+    parse_frequency,
+)
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
@@ -49,18 +55,50 @@ def get_schema() -> str:
 
 
 @mcp.tool()
-def new_key(name: str) -> str:
+def new_key(name: str, frequency: str | None = None) -> str:
     """Register a new measurement key. Keys must be registered before use in insert.
 
     Use dot-separated snake_case for hierarchical keys, e.g. 'workout.bicep_curl'.
+
+    Optionally set a tracking frequency — how often the measurement is meant to
+    be recorded — as 'daily', 'weekly', 'monthly', or an 'n weekly' form like
+    'every 2 weeks' / '3 weekly'.
     """
+    unit_count = parse_frequency(frequency) if frequency is not None else None
     with Session(engine) as session:
         if session.get(TrackingKey, name):
             raise ValueError(f"Key '{name}' already exists")
-        # TrackingKey validates the name format at the ORM layer.
-        session.add(TrackingKey(name=name))
+        # TrackingKey validates the name/frequency at the ORM layer.
+        key = TrackingKey(name=name)
+        if unit_count is not None:
+            key.frequency_unit, key.frequency_count = unit_count
+        session.add(key)
         session.commit()
-        return f"Registered key: {name}"
+        suffix = f" ({key.frequency})" if key.frequency else ""
+        return f"Registered key: {name}{suffix}"
+
+
+@mcp.tool()
+def set_key_frequency(name: str, frequency: str | None) -> str:
+    """Set, change, or clear the tracking frequency of an existing key.
+
+    Pass a frequency string ('daily', 'weekly', 'monthly', or an 'n weekly' form
+    like 'every 2 weeks' / '3 weekly') to set it, or null/empty to clear it.
+    """
+    unit_count = parse_frequency(frequency) if frequency else None
+    with Session(engine) as session:
+        key = session.get(TrackingKey, name)
+        if key is None:
+            raise ValueError(f"Unknown key '{name}' — register it first with new_key")
+        if unit_count is None:
+            key.frequency_unit, key.frequency_count = None, None
+        else:
+            key.frequency_unit, key.frequency_count = unit_count
+        session.add(key)
+        session.commit()
+        if key.frequency:
+            return f"Set frequency of '{name}' to {key.frequency}"
+        return f"Cleared frequency of '{name}'"
 
 
 @mcp.tool()
@@ -152,10 +190,13 @@ def list_keys(level: int = 0) -> str:
         keys = session.exec(select(TrackingKey)).all()
     if not keys:
         return "No keys registered"
-    names = [k.name for k in keys]
     if level == 0:
-        return "\n".join(sorted(names))
-    prefixes = sorted({".".join(name.split(".")[:level]) for name in names})
+        # At full depth, annotate each key with its tracking frequency if set.
+        return "\n".join(
+            f"{k.name} ({k.frequency})" if k.frequency else k.name
+            for k in sorted(keys, key=lambda k: k.name)
+        )
+    prefixes = sorted({".".join(k.name.split(".")[:level]) for k in keys})
     return "\n".join(prefixes)
 
 
