@@ -30,6 +30,7 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 
 | Tool | Description |
 |------|-------------|
+| `get_version()` | Report the running server version and whether a newer release is available |
 | `get_schema()` | Report the table columns and each unit's metadata JSON Schema |
 | `new_key(name, unit, frequency?, description?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) and a description |
 | `update_key(name, unit?, frequency?, description?)` | Update a key's fields (omitted = untouched; `''` clears frequency/description; unit can't be cleared) |
@@ -71,6 +72,69 @@ baseline first so migrations don't try to recreate existing tables:
 ```sh
 uv run alembic stamp 0001_initial_schema
 uv run alembic upgrade head
+```
+
+## Releases
+
+Versioning is automatic and driven by pull request labels — you never edit the
+version by hand. The `version` field in `pyproject.toml` is the single source of
+truth; the `get_version` tool reports the running server's version (from the
+installed package metadata) and, when the GitHub Releases API is reachable,
+compares it against the latest published release so you can tell whether the
+server is up to date:
+
+```
+tracker 0.2.0
+latest release: 0.2.0 — up to date
+```
+
+If GitHub can't be reached, the current version is still returned with a note
+that the check was skipped. A fork can point the check at its own releases by
+setting `TRACKER_GITHUB_REPO=owner/repo` (default `ryanpeach-homelab/tracker`);
+`TRACKER_RELEASE_CHECK_TIMEOUT` (seconds, default `5`) bounds the API call.
+
+### How a release is cut
+
+Every PR must carry exactly one **version-bump label** that says how the release
+version should change when it merges (following [semver](https://semver.org/)):
+
+| Label   | Bump          | Use for |
+|---------|---------------|---------|
+| `major` | `x.0.0`       | breaking changes |
+| `minor` | `0.x.0`       | new, backward-compatible features |
+| `patch` | `0.0.x`       | bug fixes and internal changes |
+
+The **PR Labels** workflow (`.github/workflows/pr-labels.yml`) fails the PR
+until exactly one of these labels is set, so nothing merges without declaring
+its bump. On merge into the default branch, the **Release** workflow
+(`.github/workflows/release.yml`) then:
+
+1. reads the label and runs `uv version --bump <level>`, which updates
+   `pyproject.toml` **and** `uv.lock` together;
+2. commits the bump (`Release vX.Y.Z`) to the default branch and tags it
+   `vX.Y.Z`;
+3. builds the container image from the `Dockerfile` and pushes it to GHCR as
+   `ghcr.io/ryanpeach-homelab/tracker:vX.Y.Z` and `:latest`;
+4. creates a GitHub Release with auto-generated notes — this is the release
+   `get_version` compares against.
+
+The three labels must exist in the repository (create `major`, `minor`, and
+`patch` once under **Issues → Labels**). Enabling **PR Labels** as a required
+status check in branch protection stops an unlabeled PR from merging. The
+Release workflow needs to push the bump commit to the default branch, so if that
+branch is protected, allow the GitHub Actions bot to bypass the restriction (or
+supply a token that can).
+
+### Deploying a release
+
+Deploy the published image (supply `DATABASE_URI`, and `NTFY_URL` if you want
+the reminder loop). Run migrations with the same image before starting the
+server:
+
+```sh
+docker run --rm -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest \
+  alembic upgrade head
+docker run -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest
 ```
 
 ## Development

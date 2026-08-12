@@ -1,0 +1,98 @@
+name: Release
+
+# Versioning is automatic. Every PR carries exactly one bump label
+# (major / minor / patch) — enforced by the "PR Labels" workflow. When a PR is
+# merged into the default branch, this workflow bumps the version accordingly,
+# commits and tags it, publishes the container image to GHCR, and cuts a GitHub
+# Release. The running server's `get_version` tool compares itself against that
+# release, so you can always tell whether a server is up to date.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write # push the version-bump commit + tag, create the Release
+  packages: write # push the image to GHCR
+
+jobs:
+  release:
+    # Only on a real merge into the default branch — closed-without-merge and
+    # merges into other branches don't release.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Land on the branch tip so the bump commit fast-forwards cleanly.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Determine bump level from PR labels
+        id: bump
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          LEVEL="$(python3 - <<'PY'
+          import json, os, sys
+          labels = json.loads(os.environ["LABELS"])
+          picked = [name for name in labels if name in ("major", "minor", "patch")]
+          if len(picked) != 1:
+              sys.exit(f"::error::merged PR must carry exactly one of the major/minor/patch labels (found: {picked or 'none'})")
+          print(picked[0])
+          PY
+          )"
+          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version
+        id: version
+        # uv updates both pyproject.toml and uv.lock so the version stays a
+        # single source of truth — this is what get_version reports.
+        run: |
+          uv version --bump "${{ steps.bump.outputs.level }}"
+          echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, tag and push
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v${VERSION}"
+          git tag "v${VERSION}"
+          git push origin HEAD:"${{ github.event.repository.default_branch }}"
+          git push origin "v${VERSION}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image name (lowercase)
+        # GHCR requires a lowercase repository path.
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        # Built from the working tree, which now holds the bumped version, so
+        # the image's get_version reports the version it is tagged with.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:v${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=v${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          generate_release_notes: true

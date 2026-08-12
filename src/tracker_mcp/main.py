@@ -20,6 +20,13 @@ from tracker_mcp.models import (
     validate_metadata,
 )
 from tracker_mcp.ntfy import NTFY_URL, notification_loop
+from tracker_mcp.version import (
+    GITHUB_REPO,
+    VersionStatus,
+    compare,
+    current_version,
+    latest_release,
+)
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
@@ -63,6 +70,41 @@ def _unit_schema_for_key(session: Session, key: str) -> dict | None:
         return None
     unit = session.get(TrackingUnit, tk.unit)
     return unit.json_schema if unit is not None else None
+
+
+@mcp.tool()
+def get_version() -> str:
+    """Report the running server version and whether it is up to date.
+
+    Always returns the installed tracker version. When the GitHub Releases API
+    is reachable, it also reports the latest published version and compares the
+    two, so you can tell at a glance whether a newer release is available. If the
+    API can't be reached (offline homelab, rate limit), the current version is
+    still returned with a note that the check was skipped.
+    """
+    current = current_version()
+    lines = [f"tracker {current}"]
+    try:
+        latest = latest_release()
+    except Exception as exc:
+        lines.append(f"latest release: check failed ({type(exc).__name__})")
+        return "\n".join(lines)
+    if latest is None:
+        lines.append(f"latest release: none published yet ({GITHUB_REPO})")
+        return "\n".join(lines)
+    latest_norm = latest.lstrip("v")
+    match compare(current, latest):
+        case VersionStatus.UP_TO_DATE:
+            lines.append(f"latest release: {latest_norm} — up to date")
+        case VersionStatus.UPDATE_AVAILABLE:
+            lines.append(
+                f"latest release: {latest_norm} — update available ({current} → {latest_norm})"
+            )
+        case VersionStatus.AHEAD:
+            lines.append(
+                f"latest release: {latest_norm} — this server is ahead of the latest release"
+            )
+    return "\n".join(lines)
 
 
 @mcp.tool()
