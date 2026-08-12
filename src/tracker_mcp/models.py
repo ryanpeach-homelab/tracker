@@ -208,6 +208,9 @@ class Tracking(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(foreign_key="tracking_key.name", index=True)
     value: float
+    # Free-form human description of this individual measurement (a per-reading
+    # note). Distinct from the structured ``meta`` JSONB; NULL means unset.
+    description: str | None = Field(default=None)
     # WGS 84 (SRID 4326) geographic point — (longitude, latitude) on the earth.
     # spatial_index is left off to keep the schema minimal; add one via a
     # migration if location queries need it.
