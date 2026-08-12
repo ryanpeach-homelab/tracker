@@ -7,11 +7,14 @@ A minimal [FastMCP](https://github.com/jlowin/fastmcp) server for logging and qu
 ## Schema
 
 ```
-tracking_key  (name TEXT PK, frequency_unit TEXT NULL, frequency_count INT NULL)
-tracking_unit (name TEXT PK)
-tracking      (id SERIAL PK, key → tracking_key, value FLOAT, unit → tracking_unit,
+tracking_key  (name TEXT PK, unit → tracking_unit, description TEXT NULL,
+               frequency_unit TEXT NULL, frequency_count INT NULL)
+tracking_unit (name TEXT PK, description TEXT NULL, json_schema JSONB NULL)
+tracking      (id SERIAL PK, key → tracking_key, value FLOAT,
                location geography(Point,4326) NULL, created_at TIMESTAMPTZ, metadata JSONB)
 ```
+
+Keys and units each carry an optional free-form `description` of what they measure.
 
 Keys and units must be registered before use. `insert` enforces this at the application level; foreign keys enforce it at the database level.
 
@@ -19,16 +22,20 @@ Key/unit name formats (dot-separated snake_case keys, snake_case units) are vali
 
 A key can carry an optional **tracking frequency** — how often the measurement is meant to be recorded — stored as a `(frequency_unit, frequency_count)` pair (`day`/`week`/`month` × a positive integer). This captures the parametric "every n weeks" case exactly, without the month-vs-30-days lossiness of a raw interval; `daily`/`weekly`/`monthly` are just count 1, and "n weekly" is `('week', n)`. A `CHECK` constraint keeps the pair both-set-or-both-null. Friendly strings (`'daily'`, `'weekly'`, `'monthly'`, `'every 2 weeks'`, `'3 weekly'`) are converted by `parse_frequency`/`format_frequency` in `tracker_mcp.models`, and `TrackingKey.frequency` renders the label back.
 
+A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](https://json-schema.org/) (Draft 2020-12) that validates the `metadata` of every measurement recorded against that unit. The schema is checked for well-formedness when stored (via `validate_json_schema`), and each `insert`/`insert_batch`/`update_item` validates the measurement's metadata against it (via `validate_metadata`) — both in `tracker_mcp.models`, so every write path is covered. A `NULL` schema imposes no constraint; a `NULL` metadata is validated as an empty object so `required` fields are still enforced. `get_schema` reports every unit's schema.
+
 `location` is an optional [PostGIS](https://postgis.net/) `geography(Point,4326)` — a WGS 84 geocoordinate for where a measurement was taken (requires the `postgis` extension, which the migration enables). Build one with `make_point(latitude, longitude)` from `tracker_mcp.models`, which validates the coordinate ranges; `insert` takes plain `latitude`/`longitude` decimal degrees.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `new_key(name, frequency?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) |
-| `set_key_frequency(name, frequency)` | Set, change, or clear a key's tracking frequency (null/empty clears it) |
+| `get_schema()` | Report the table columns and each unit's metadata JSON Schema |
+| `new_key(name, unit, frequency?, description?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) and a description |
+| `update_key(name, unit?, frequency?, description?)` | Update a key's fields (omitted = untouched; `''` clears frequency/description; unit can't be cleared) |
 | `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
-| `new_unit(name)` | Register a measurement unit |
+| `new_unit(name, description?, json_schema?)` | Register a measurement unit, optionally with a description and a metadata JSON Schema |
+| `update_unit(name, description?, json_schema?)` | Update a unit's fields (omitted = untouched; `''` clears the description, `{}` clears the schema) |
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |

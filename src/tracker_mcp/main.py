@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from tracker_mcp.models import (
     TrackingUnit,
     make_point,
     parse_frequency,
+    validate_json_schema,
+    validate_metadata,
 )
 from tracker_mcp.ntfy import NTFY_URL, notification_loop
 
@@ -48,9 +51,28 @@ class Measurement(BaseModel):
     value: float
 
 
+def _unit_schema_for_key(session: Session, key: str) -> dict | None:
+    """Return the JSON Schema of the unit backing ``key``, or None if unset.
+
+    Assumes the key exists (callers validate that first). The unit is looked up
+    through the key so that metadata validation follows the same key → unit
+    path the rest of the schema uses.
+    """
+    tk = session.get(TrackingKey, key)
+    if tk is None:
+        return None
+    unit = session.get(TrackingUnit, tk.unit)
+    return unit.json_schema if unit is not None else None
+
+
 @mcp.tool()
 def get_schema() -> str:
-    """Return the column names and types for all tables in the tracking database."""
+    """Return the table columns and each unit's metadata JSON Schema.
+
+    The first section lists the column names and types for all tables. The
+    second section lists any unit that defines a metadata ``json_schema`` — the
+    JSON Schema its measurements' metadata must satisfy.
+    """
     with engine.connect() as conn:
         result = conn.execute(
             text("""
@@ -71,11 +93,25 @@ def get_schema() -> str:
             current_table = table_name
         nullable = "" if is_nullable == "YES" else " NOT NULL"
         out.append(f"  {column_name}  {data_type}{nullable}")
+
+    with Session(engine) as session:
+        units = session.exec(
+            select(TrackingUnit).where(col(TrackingUnit.json_schema).is_not(None))
+        ).all()
+    if units:
+        out.append("\nunit metadata schemas")
+        for unit in sorted(units, key=lambda u: u.name):
+            out.append(f"  {unit.name}: {json.dumps(unit.json_schema)}")
     return "\n".join(out).strip()
 
 
 @mcp.tool()
-def new_key(name: str, unit: str, frequency: str | None = None) -> str:
+def new_key(
+    name: str,
+    unit: str,
+    frequency: str | None = None,
+    description: str | None = None,
+) -> str:
     """Register a new measurement key. Keys must be registered before use in insert.
 
     Use dot-separated snake_case for hierarchical keys, e.g. 'workout.bicep_curl'.
@@ -83,7 +119,8 @@ def new_key(name: str, unit: str, frequency: str | None = None) -> str:
 
     Optionally set a tracking frequency — how often the measurement is meant to
     be recorded — as 'daily', 'weekly', 'monthly', or an 'n weekly' form like
-    'every 2 weeks' / '3 weekly'.
+    'every 2 weeks' / '3 weekly'. Optionally attach a free-form description of
+    what the key measures.
     """
     unit_count = parse_frequency(frequency) if frequency is not None else None
     with Session(engine) as session:
@@ -91,7 +128,7 @@ def new_key(name: str, unit: str, frequency: str | None = None) -> str:
             raise ValueError(f"Key '{name}' already exists")
         if not session.get(TrackingUnit, unit):
             raise ValueError(f"Unknown unit '{unit}' — register it first with new_unit")
-        key = TrackingKey(name=name, unit=unit)
+        key = TrackingKey(name=name, unit=unit, description=description)
         if unit_count is not None:
             key.frequency_unit, key.frequency_count = unit_count
         session.add(key)
@@ -101,41 +138,105 @@ def new_key(name: str, unit: str, frequency: str | None = None) -> str:
 
 
 @mcp.tool()
-def set_key_frequency(name: str, frequency: str | None) -> str:
-    """Set, change, or clear the tracking frequency of an existing key.
+def update_key(
+    name: str,
+    unit: str | None = None,
+    frequency: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Update fields of an existing key. Only the provided fields change.
 
-    Pass a frequency string ('daily', 'weekly', 'monthly', or an 'n weekly' form
-    like 'every 2 weeks' / '3 weekly') to set it, or null/empty to clear it.
+    Any argument left as null/omitted is untouched. To clear an optional field,
+    pass an empty value: '' clears the frequency or description. unit, if given,
+    must already be registered via new_unit and cannot be cleared.
+
+    frequency accepts 'daily'/'weekly'/'monthly' or an 'n weekly' form like
+    'every 2 weeks' / '3 weekly'.
     """
-    unit_count = parse_frequency(frequency) if frequency else None
     with Session(engine) as session:
         key = session.get(TrackingKey, name)
         if key is None:
             raise ValueError(f"Unknown key '{name}' — register it first with new_key")
-        if unit_count is None:
-            key.frequency_unit, key.frequency_count = None, None
-        else:
-            key.frequency_unit, key.frequency_count = unit_count
+        changed: list[str] = []
+        if unit is not None:
+            if not session.get(TrackingUnit, unit):
+                raise ValueError(
+                    f"Unknown unit '{unit}' — register it first with new_unit"
+                )
+            key.unit = unit
+            changed.append(f"unit={unit}")
+        if frequency is not None:
+            unit_count = parse_frequency(frequency) if frequency else None
+            key.frequency_unit, key.frequency_count = unit_count or (None, None)
+            changed.append(f"frequency={key.frequency or 'cleared'}")
+        if description is not None:
+            key.description = description or None
+            changed.append(f"description={'cleared' if not key.description else 'set'}")
+        if not changed:
+            return f"No changes for key '{name}'"
         session.add(key)
         session.commit()
-        if key.frequency:
-            return f"Set frequency of '{name}' to {key.frequency}"
-        return f"Cleared frequency of '{name}'"
+        return f"Updated key '{name}': {', '.join(changed)}"
 
 
 @mcp.tool()
-def new_unit(name: str) -> str:
+def new_unit(
+    name: str,
+    description: str | None = None,
+    json_schema: dict | None = None,
+) -> str:
     """Register a new measurement unit. Units must be registered before use in insert.
 
     Use snake_case. Prefer SI notation where applicable, e.g. 'sec', 'ms', 'kg', 'm', 'count'.
+    Optionally attach a free-form description of what the unit measures, and a
+    JSON Schema (Draft 2020-12) that validates the metadata of every measurement
+    recorded against this unit.
     """
     with Session(engine) as session:
         if session.get(TrackingUnit, name):
             raise ValueError(f"Unit '{name}' already exists")
-        # TrackingUnit validates the name format at the ORM layer.
-        session.add(TrackingUnit(name=name))
+        # TrackingUnit validates the name format and JSON Schema at the ORM layer.
+        session.add(
+            TrackingUnit(name=name, description=description, json_schema=json_schema)
+        )
         session.commit()
         return f"Registered unit: {name}"
+
+
+@mcp.tool()
+def update_unit(
+    name: str,
+    description: str | None = None,
+    json_schema: dict | None = None,
+) -> str:
+    """Update fields of an existing unit. Only the provided fields change.
+
+    Any argument left as null/omitted is untouched. To clear an optional field,
+    pass an empty value: '' clears the description, {} clears the metadata JSON
+    Schema. A provided json_schema (Draft 2020-12) is validated for
+    well-formedness; existing measurements are not re-validated.
+    """
+    if json_schema:
+        # Fail fast with a clear error before touching the row.
+        validate_json_schema(json_schema)
+    with Session(engine) as session:
+        unit = session.get(TrackingUnit, name)
+        if unit is None:
+            raise ValueError(f"Unknown unit '{name}' — register it first with new_unit")
+        changed: list[str] = []
+        if description is not None:
+            unit.description = description or None
+            changed.append(
+                f"description={'cleared' if not unit.description else 'set'}"
+            )
+        if json_schema is not None:
+            unit.json_schema = json_schema or None
+            changed.append(f"schema={'cleared' if not unit.json_schema else 'set'}")
+        if not changed:
+            return f"No changes for unit '{name}'"
+        session.add(unit)
+        session.commit()
+        return f"Updated unit '{name}': {', '.join(changed)}"
 
 
 @mcp.tool()
@@ -162,6 +263,7 @@ def rename_key(old_name: str, new_name: str) -> str:
             TrackingKey(
                 name=new_name,
                 unit=old_key.unit,
+                description=old_key.description,
                 frequency_unit=old_key.frequency_unit,
                 frequency_count=old_key.frequency_count,
             )
@@ -188,7 +290,8 @@ def rename_unit(old_name: str, new_name: str) -> str:
     if old_name == new_name:
         raise ValueError("old_name and new_name are the same")
     with Session(engine) as session:
-        if not session.get(TrackingUnit, old_name):
+        old_unit = session.get(TrackingUnit, old_name)
+        if old_unit is None:
             raise ValueError(f"Unknown unit '{old_name}'")
         if session.get(TrackingUnit, new_name):
             raise ValueError(f"Unit '{new_name}' already exists")
@@ -196,7 +299,13 @@ def rename_unit(old_name: str, new_name: str) -> str:
         # The tracking_key.unit FK has no ON UPDATE CASCADE, so this ordering
         # keeps every row referencing a live unit throughout.
         # TrackingUnit validates new_name's format at the ORM layer.
-        session.add(TrackingUnit(name=new_name))
+        session.add(
+            TrackingUnit(
+                name=new_name,
+                description=old_unit.description,
+                json_schema=old_unit.json_schema,
+            )
+        )
         session.flush()
         rowcount = session.exec(
             update(TrackingKey)
@@ -221,11 +330,15 @@ def list_keys(level: int = 0) -> str:
     if not keys:
         return "No keys registered"
     if level == 0:
-        # At full depth, annotate each key with its tracking frequency if set.
-        return "\n".join(
-            f"{k.name} ({k.frequency})" if k.frequency else k.name
-            for k in sorted(keys, key=lambda k: k.name)
-        )
+        # At full depth, annotate each key with its tracking frequency and
+        # description if set.
+        def _fmt(k: TrackingKey) -> str:
+            line = f"{k.name} ({k.frequency})" if k.frequency else k.name
+            if k.description:
+                line += f" — {k.description}"
+            return line
+
+        return "\n".join(_fmt(k) for k in sorted(keys, key=lambda k: k.name))
     prefixes = sorted({".".join(k.name.split(".")[:level]) for k in keys})
     return "\n".join(prefixes)
 
@@ -237,7 +350,9 @@ def list_units() -> str:
         units = session.exec(select(TrackingUnit)).all()
     if not units:
         return "No units registered"
-    return "\n".join(u.name for u in units)
+    return "\n".join(
+        f"{u.name} — {u.description}" if u.description else u.name for u in units
+    )
 
 
 @mcp.tool()
@@ -266,6 +381,8 @@ def insert(
         tk = session.get(TrackingKey, key)
         if tk is None:
             raise ValueError(f"Unknown key '{key}' — register it first with new_key")
+        # Validate metadata against the unit's JSON Schema, if it has one.
+        validate_metadata(_unit_schema_for_key(session, key), meta)
         row = Tracking(key=key, value=value, location=location, meta=meta)
         session.add(row)
         session.commit()
@@ -304,12 +421,14 @@ def insert_batch(
     created_at = datetime.now(timezone.utc)
     with Session(engine) as session:
         # Validate every distinct key up front so the whole batch fails
-        # fast and atomically rather than part-way through.
+        # fast and atomically rather than part-way through. The shared metadata
+        # must satisfy each key's unit schema.
         for key in sorted({m.key for m in measurements}):
             if not session.get(TrackingKey, key):
                 raise ValueError(
                     f"Unknown key '{key}' — register it first with new_key"
                 )
+            validate_metadata(_unit_schema_for_key(session, key), meta)
         session.add_all(
             [
                 Tracking(
@@ -362,6 +481,10 @@ def update_item(
             row.location = make_point(latitude, longitude)
         if meta is not None:
             row.meta = meta
+        # If the key or metadata changed, re-validate the effective metadata
+        # against the (possibly new) unit's JSON Schema.
+        if key is not None or meta is not None:
+            validate_metadata(_unit_schema_for_key(session, row.key), row.meta)
         session.add(row)
         session.commit()
         session.refresh(row)
