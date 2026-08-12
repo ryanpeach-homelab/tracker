@@ -10,11 +10,11 @@ A minimal [FastMCP](https://github.com/jlowin/fastmcp) server for logging and qu
 tracking_key  (name TEXT PK, unit → tracking_unit, description TEXT NULL,
                frequency_unit TEXT NULL, frequency_count INT NULL)
 tracking_unit (name TEXT PK, description TEXT NULL, json_schema JSONB NULL)
-tracking      (id SERIAL PK, key → tracking_key, value FLOAT,
+tracking      (id SERIAL PK, key → tracking_key, value FLOAT, description TEXT NULL,
                location geography(Point,4326) NULL, created_at TIMESTAMPTZ, metadata JSONB)
 ```
 
-Keys and units each carry an optional free-form `description` of what they measure.
+Keys and units each carry an optional free-form `description` of what they measure. An individual measurement also carries its own optional `description` — a per-reading note, distinct from the structured `metadata` JSONB.
 
 Keys and units must be registered before use. `insert` enforces this at the application level; foreign keys enforce it at the database level.
 
@@ -39,9 +39,9 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |
-| `insert(key, value, unit, latitude?, longitude?, meta?)` | Append a measurement row |
-| `insert_batch(measurements, latitude?, longitude?, meta?)` | Append many rows sharing one location, timestamp, and metadata |
-| `update_item(id, key?, value?, unit?, latitude?, longitude?, meta?)` | Update fields of an existing measurement by `id` (only provided fields change) |
+| `insert(key, value, latitude?, longitude?, meta?, description?)` | Append a measurement row, optionally with a per-reading description |
+| `insert_batch(measurements, latitude?, longitude?, meta?)` | Append many rows sharing one location, timestamp, and metadata (each measurement may carry its own description) |
+| `update_item(id, key?, value?, latitude?, longitude?, meta?, description?)` | Update fields of an existing measurement by `id` (only provided fields change; `''` clears the description) |
 | `delete_item(id)` | Delete a measurement by `id` |
 | `query(sql)` | Read-only `SELECT` against the tracking database |
 

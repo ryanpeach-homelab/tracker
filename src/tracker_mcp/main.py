@@ -49,6 +49,8 @@ class Measurement(BaseModel):
 
     key: str
     value: float
+    # Optional free-form per-reading note for this row.
+    description: str | None = None
 
 
 def _unit_schema_for_key(session: Session, key: str) -> dict | None:
@@ -362,12 +364,15 @@ def insert(
     latitude: float | None = None,
     longitude: float | None = None,
     meta: dict | None = None,
+    description: str | None = None,
 ) -> str:
     """Insert a measurement. key must be registered first via new_key (unit is on the key).
 
     Keys use dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl'.
     Optionally attach a geocoordinate for where the measurement was taken by
-    passing both latitude and longitude (WGS 84 decimal degrees).
+    passing both latitude and longitude (WGS 84 decimal degrees). Optionally
+    attach a free-form description — a per-reading note distinct from the
+    structured meta.
     """
     if (latitude is None) != (longitude is None):
         raise ValueError("latitude and longitude must be provided together")
@@ -383,7 +388,13 @@ def insert(
             raise ValueError(f"Unknown key '{key}' — register it first with new_key")
         # Validate metadata against the unit's JSON Schema, if it has one.
         validate_metadata(_unit_schema_for_key(session, key), meta)
-        row = Tracking(key=key, value=value, location=location, meta=meta)
+        row = Tracking(
+            key=key,
+            value=value,
+            location=location,
+            meta=meta,
+            description=description,
+        )
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -402,11 +413,12 @@ def insert_batch(
 ) -> str:
     """Insert many measurements that share one location, timestamp, and metadata.
 
-    Each measurement carries its own key/value/unit (all keys and units must be
-    registered first via new_key/new_unit). Every row is written with the same
-    location (from latitude/longitude, WGS 84 decimal degrees), the same
-    created_at timestamp, and the same metadata. The batch is inserted
-    atomically — if any key or unit is unknown, nothing is written.
+    Each measurement carries its own key/value/unit and an optional per-reading
+    description (all keys and units must be registered first via
+    new_key/new_unit). Every row is written with the same location (from
+    latitude/longitude, WGS 84 decimal degrees), the same created_at timestamp,
+    and the same metadata. The batch is inserted atomically — if any key or unit
+    is unknown, nothing is written.
     """
     if not measurements:
         raise ValueError("measurements must not be empty")
@@ -437,6 +449,7 @@ def insert_batch(
                     location=location,
                     created_at=created_at,
                     meta=meta,
+                    description=m.description,
                 )
                 for m in measurements
             ]
@@ -454,13 +467,15 @@ def update_item(
     latitude: float | None = None,
     longitude: float | None = None,
     meta: dict | None = None,
+    description: str | None = None,
 ) -> str:
     """Update fields of an existing measurement identified by id.
 
     Only the provided fields are changed; any argument left as None is untouched
     (so this cannot clear location or metadata — omit them to keep them). key,
     if given, must already be registered via new_key. Pass both latitude and
-    longitude together to move the measurement's geocoordinate (WGS 84 decimal degrees).
+    longitude together to move the measurement's geocoordinate (WGS 84 decimal
+    degrees). Pass description to set the per-reading note, or '' to clear it.
     """
     if (latitude is None) != (longitude is None):
         raise ValueError("latitude and longitude must be provided together")
@@ -481,6 +496,9 @@ def update_item(
             row.location = make_point(latitude, longitude)
         if meta is not None:
             row.meta = meta
+        if description is not None:
+            # '' clears the note; any other string sets it.
+            row.description = description or None
         # If the key or metadata changed, re-validate the effective metadata
         # against the (possibly new) unit's JSON Schema.
         if key is not None or meta is not None:
