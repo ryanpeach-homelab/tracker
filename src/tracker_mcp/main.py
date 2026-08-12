@@ -1,5 +1,8 @@
+import asyncio
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
 from fastmcp import FastMCP
 from pydantic import BaseModel
@@ -13,19 +16,36 @@ from tracker_mcp.models import (
     make_point,
     parse_frequency,
 )
+from tracker_mcp.ntfy import NTFY_URL, notification_loop
 
 DATABASE_URI = os.environ["DATABASE_URI"]
 engine = create_engine(DATABASE_URI)
 
-mcp = FastMCP("tracker")
+
+@asynccontextmanager
+async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-arg]
+    task: asyncio.Task[None] | None = None
+    if NTFY_URL:
+        task = asyncio.create_task(notification_loop(engine))
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+mcp = FastMCP("tracker", lifespan=lifespan)
 
 
 class Measurement(BaseModel):
-    """One key/value/unit measurement within a batch insert."""
+    """One key/value measurement within a batch insert."""
 
     key: str
     value: float
-    unit: str
 
 
 @mcp.tool()
@@ -55,10 +75,11 @@ def get_schema() -> str:
 
 
 @mcp.tool()
-def new_key(name: str, frequency: str | None = None) -> str:
+def new_key(name: str, unit: str, frequency: str | None = None) -> str:
     """Register a new measurement key. Keys must be registered before use in insert.
 
     Use dot-separated snake_case for hierarchical keys, e.g. 'workout.bicep_curl'.
+    unit must already be registered via new_unit.
 
     Optionally set a tracking frequency — how often the measurement is meant to
     be recorded — as 'daily', 'weekly', 'monthly', or an 'n weekly' form like
@@ -68,14 +89,15 @@ def new_key(name: str, frequency: str | None = None) -> str:
     with Session(engine) as session:
         if session.get(TrackingKey, name):
             raise ValueError(f"Key '{name}' already exists")
-        # TrackingKey validates the name/frequency at the ORM layer.
-        key = TrackingKey(name=name)
+        if not session.get(TrackingUnit, unit):
+            raise ValueError(f"Unknown unit '{unit}' — register it first with new_unit")
+        key = TrackingKey(name=name, unit=unit)
         if unit_count is not None:
             key.frequency_unit, key.frequency_count = unit_count
         session.add(key)
         session.commit()
         suffix = f" ({key.frequency})" if key.frequency else ""
-        return f"Registered key: {name}{suffix}"
+        return f"Registered key: {name} [{unit}]{suffix}"
 
 
 @mcp.tool()
@@ -127,7 +149,8 @@ def rename_key(old_name: str, new_name: str) -> str:
     if old_name == new_name:
         raise ValueError("old_name and new_name are the same")
     with Session(engine) as session:
-        if not session.get(TrackingKey, old_name):
+        old_key = session.get(TrackingKey, old_name)
+        if old_key is None:
             raise ValueError(f"Unknown key '{old_name}'")
         if session.get(TrackingKey, new_name):
             raise ValueError(f"Key '{new_name}' already exists")
@@ -135,7 +158,14 @@ def rename_key(old_name: str, new_name: str) -> str:
         # The tracking.key FK has no ON UPDATE CASCADE, so this ordering
         # keeps every row referencing a live key throughout.
         # TrackingKey validates new_name's format at the ORM layer.
-        session.add(TrackingKey(name=new_name))
+        session.add(
+            TrackingKey(
+                name=new_name,
+                unit=old_key.unit,
+                frequency_unit=old_key.frequency_unit,
+                frequency_count=old_key.frequency_count,
+            )
+        )
         session.flush()
         rowcount = session.exec(
             update(Tracking).where(col(Tracking.key) == old_name).values(key=new_name)
@@ -162,21 +192,21 @@ def rename_unit(old_name: str, new_name: str) -> str:
             raise ValueError(f"Unknown unit '{old_name}'")
         if session.get(TrackingUnit, new_name):
             raise ValueError(f"Unit '{new_name}' already exists")
-        # Insert the new unit, repoint measurements, then drop the old unit.
-        # The tracking.unit FK has no ON UPDATE CASCADE, so this ordering
+        # Insert the new unit, repoint keys, then drop the old unit.
+        # The tracking_key.unit FK has no ON UPDATE CASCADE, so this ordering
         # keeps every row referencing a live unit throughout.
         # TrackingUnit validates new_name's format at the ORM layer.
         session.add(TrackingUnit(name=new_name))
         session.flush()
         rowcount = session.exec(
-            update(Tracking).where(col(Tracking.unit) == old_name).values(unit=new_name)
+            update(TrackingKey)
+            .where(col(TrackingKey.unit) == old_name)
+            .values(unit=new_name)
         ).rowcount
         session.flush()
         session.delete(session.get(TrackingUnit, old_name))
         session.commit()
-    return (
-        f"Renamed unit '{old_name}' → '{new_name}' ({rowcount} measurement(s) updated)"
-    )
+    return f"Renamed unit '{old_name}' → '{new_name}' ({rowcount} key(s) updated)"
 
 
 @mcp.tool()
@@ -214,12 +244,11 @@ def list_units() -> str:
 def insert(
     key: str,
     value: float,
-    unit: str,
     latitude: float | None = None,
     longitude: float | None = None,
     meta: dict | None = None,
 ) -> str:
-    """Insert a measurement. key and unit must be registered first via new_key/new_unit.
+    """Insert a measurement. key must be registered first via new_key (unit is on the key).
 
     Keys use dot-separated snake_case hierarchy, e.g. 'workout.bicep_curl'.
     Optionally attach a geocoordinate for where the measurement was taken by
@@ -234,16 +263,17 @@ def insert(
         else None
     )
     with Session(engine) as session:
-        if not session.get(TrackingKey, key):
+        tk = session.get(TrackingKey, key)
+        if tk is None:
             raise ValueError(f"Unknown key '{key}' — register it first with new_key")
-        if not session.get(TrackingUnit, unit):
-            raise ValueError(f"Unknown unit '{unit}' — register it first with new_unit")
-        row = Tracking(key=key, value=value, unit=unit, location=location, meta=meta)
+        row = Tracking(key=key, value=value, location=location, meta=meta)
         session.add(row)
         session.commit()
         session.refresh(row)
         where = f" @ ({latitude}, {longitude})" if location else ""
-        return f"Inserted id={row.id}: {key}={value} {unit}{where} at {row.created_at}"
+        return (
+            f"Inserted id={row.id}: {key}={value} {tk.unit}{where} at {row.created_at}"
+        )
 
 
 @mcp.tool()
@@ -273,24 +303,18 @@ def insert_batch(
     )
     created_at = datetime.now(timezone.utc)
     with Session(engine) as session:
-        # Validate every distinct key/unit up front so the whole batch fails
+        # Validate every distinct key up front so the whole batch fails
         # fast and atomically rather than part-way through.
         for key in sorted({m.key for m in measurements}):
             if not session.get(TrackingKey, key):
                 raise ValueError(
                     f"Unknown key '{key}' — register it first with new_key"
                 )
-        for unit in sorted({m.unit for m in measurements}):
-            if not session.get(TrackingUnit, unit):
-                raise ValueError(
-                    f"Unknown unit '{unit}' — register it first with new_unit"
-                )
         session.add_all(
             [
                 Tracking(
                     key=m.key,
                     value=m.value,
-                    unit=m.unit,
                     location=location,
                     created_at=created_at,
                     meta=meta,
@@ -308,7 +332,6 @@ def update_item(
     id: int,
     key: str | None = None,
     value: float | None = None,
-    unit: str | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
     meta: dict | None = None,
@@ -316,10 +339,9 @@ def update_item(
     """Update fields of an existing measurement identified by id.
 
     Only the provided fields are changed; any argument left as None is untouched
-    (so this cannot clear location or metadata — omit them to keep them). key and
-    unit, if given, must already be registered via new_key/new_unit. Pass both
-    latitude and longitude together to move the measurement's geocoordinate
-    (WGS 84 decimal degrees).
+    (so this cannot clear location or metadata — omit them to keep them). key,
+    if given, must already be registered via new_key. Pass both latitude and
+    longitude together to move the measurement's geocoordinate (WGS 84 decimal degrees).
     """
     if (latitude is None) != (longitude is None):
         raise ValueError("latitude and longitude must be provided together")
@@ -335,12 +357,6 @@ def update_item(
             row.key = key
         if value is not None:
             row.value = value
-        if unit is not None:
-            if not session.get(TrackingUnit, unit):
-                raise ValueError(
-                    f"Unknown unit '{unit}' — register it first with new_unit"
-                )
-            row.unit = unit
         if latitude is not None and longitude is not None:
             # make_point validates the coordinate ranges at the models layer.
             row.location = make_point(latitude, longitude)
@@ -349,9 +365,9 @@ def update_item(
         session.add(row)
         session.commit()
         session.refresh(row)
-        return (
-            f"Updated id={row.id}: {row.key}={row.value} {row.unit} at {row.created_at}"
-        )
+        tk = session.get(TrackingKey, row.key)
+        unit = tk.unit if tk is not None else "?"
+        return f"Updated id={row.id}: {row.key}={row.value} {unit} at {row.created_at}"
 
 
 @mcp.tool()
@@ -361,10 +377,10 @@ def delete_item(id: int) -> str:
         row = session.get(Tracking, id)
         if row is None:
             raise ValueError(f"Unknown measurement id={id}")
-        key, value, unit = row.key, row.value, row.unit
+        key, value = row.key, row.value
         session.delete(row)
         session.commit()
-    return f"Deleted id={id}: {key}={value} {unit}"
+    return f"Deleted id={id}: {key}={value}"
 
 
 @mcp.tool()
