@@ -76,11 +76,12 @@ uv run alembic upgrade head
 
 ## Releases
 
-Versions are cut from the `version` field in `pyproject.toml`, which is the
-single source of truth. The `get_version` tool reports the running server's
-version (read from the installed package metadata) and, when the GitHub Releases
-API is reachable, compares it against the latest published release so you can
-tell whether the server is up to date:
+Versioning is automatic and driven by pull request labels — you never edit the
+version by hand. The `version` field in `pyproject.toml` is the single source of
+truth; the `get_version` tool reports the running server's version (from the
+installed package metadata) and, when the GitHub Releases API is reachable,
+compares it against the latest published release so you can tell whether the
+server is up to date:
 
 ```
 tracker 0.2.0
@@ -92,23 +93,39 @@ that the check was skipped. A fork can point the check at its own releases by
 setting `TRACKER_GITHUB_REPO=owner/repo` (default `ryanpeach-homelab/tracker`);
 `TRACKER_RELEASE_CHECK_TIMEOUT` (seconds, default `5`) bounds the API call.
 
-To publish a release, bump the version and push a matching tag:
+### How a release is cut
 
-```sh
-# edit pyproject.toml: version = "0.3.0"
-git commit -am "Release 0.3.0"
-git tag v0.3.0
-git push origin main --tags
-```
+Every PR must carry exactly one **version-bump label** that says how the release
+version should change when it merges (following [semver](https://semver.org/)):
 
-The `Release` workflow (`.github/workflows/release.yml`) then:
+| Label   | Bump          | Use for |
+|---------|---------------|---------|
+| `major` | `x.0.0`       | breaking changes |
+| `minor` | `0.x.0`       | new, backward-compatible features |
+| `patch` | `0.0.x`       | bug fixes and internal changes |
 
-1. verifies the tag (`v0.3.0`) matches the `pyproject.toml` version, failing the
-   release if they disagree so the version can't drift;
-2. builds the container image from the `Dockerfile` and pushes it to GHCR as
-   `ghcr.io/ryanpeach-homelab/tracker:v0.3.0` and `:latest`;
-3. creates a GitHub Release with auto-generated notes — this is the release
+The **PR Labels** workflow (`.github/workflows/pr-labels.yml`) fails the PR
+until exactly one of these labels is set, so nothing merges without declaring
+its bump. On merge into the default branch, the **Release** workflow
+(`.github/workflows/release.yml`) then:
+
+1. reads the label and runs `uv version --bump <level>`, which updates
+   `pyproject.toml` **and** `uv.lock` together;
+2. commits the bump (`Release vX.Y.Z`) to the default branch and tags it
+   `vX.Y.Z`;
+3. builds the container image from the `Dockerfile` and pushes it to GHCR as
+   `ghcr.io/ryanpeach-homelab/tracker:vX.Y.Z` and `:latest`;
+4. creates a GitHub Release with auto-generated notes — this is the release
    `get_version` compares against.
+
+The three labels must exist in the repository (create `major`, `minor`, and
+`patch` once under **Issues → Labels**). Enabling **PR Labels** as a required
+status check in branch protection stops an unlabeled PR from merging. The
+Release workflow needs to push the bump commit to the default branch, so if that
+branch is protected, allow the GitHub Actions bot to bypass the restriction (or
+supply a token that can).
+
+### Deploying a release
 
 Deploy the published image (supply `DATABASE_URI`, and `NTFY_URL` if you want
 the reminder loop). Run migrations with the same image before starting the

@@ -1,40 +1,69 @@
 name: Release
 
-# Cut a versioned release by pushing a tag that matches the pyproject version:
-#
-#   git tag v0.2.0 && git push origin v0.2.0
-#
-# This builds and publishes a container image to GHCR (tagged with the exact
-# version and `latest`) and creates a GitHub Release. The running server's
-# `get_version` tool reports its own version and compares it against the latest
-# release created here, so you can always tell whether a server is up to date.
+# Versioning is automatic. Every PR carries exactly one bump label
+# (major / minor / patch) — enforced by the "PR Labels" workflow. When a PR is
+# merged into the default branch, this workflow bumps the version accordingly,
+# commits and tags it, publishes the container image to GHCR, and cuts a GitHub
+# Release. The running server's `get_version` tool compares itself against that
+# release, so you can always tell whether a server is up to date.
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  pull_request:
+    types: [closed]
 
 permissions:
-  contents: write # create the GitHub Release
+  contents: write # push the version-bump commit + tag, create the Release
   packages: write # push the image to GHCR
 
 jobs:
   release:
+    # Only on a real merge into the default branch — closed-without-merge and
+    # merges into other branches don't release.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Land on the branch tip so the bump commit fast-forwards cleanly.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
 
-      - name: Verify tag matches pyproject version
-        # A tag whose version disagrees with pyproject.toml would ship an image
-        # whose get_version output contradicts its release tag. Fail loudly
-        # instead, so the version stays a single source of truth.
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Determine bump level from PR labels
+        id: bump
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
-          echo "tag=$TAG_VERSION pyproject=$PKG_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION does not match pyproject version $PKG_VERSION. Bump pyproject.toml to match the tag."
-            exit 1
-          fi
+          LEVEL="$(python3 - <<'PY'
+          import json, os, sys
+          labels = json.loads(os.environ["LABELS"])
+          picked = [name for name in labels if name in ("major", "minor", "patch")]
+          if len(picked) != 1:
+              sys.exit(f"::error::merged PR must carry exactly one of the major/minor/patch labels (found: {picked or 'none'})")
+          print(picked[0])
+          PY
+          )"
+          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version
+        id: version
+        # uv updates both pyproject.toml and uv.lock so the version stays a
+        # single source of truth — this is what get_version reports.
+        run: |
+          uv version --bump "${{ steps.bump.outputs.level }}"
+          echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, tag and push
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v${VERSION}"
+          git tag "v${VERSION}"
+          git push origin HEAD:"${{ github.event.repository.default_branch }}"
+          git push origin "v${VERSION}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -48,19 +77,22 @@ jobs:
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Build and push image
+        # Built from the working tree, which now holds the bumped version, so
+        # the image's get_version reports the version it is tagged with.
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:v${{ steps.version.outputs.version }}
             ${{ env.IMAGE }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.version=v${{ steps.version.outputs.version }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
