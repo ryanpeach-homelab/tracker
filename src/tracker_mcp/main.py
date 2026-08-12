@@ -22,6 +22,7 @@ from tracker_mcp.models import (
 from tracker_mcp.ntfy import NTFY_URL, notification_loop
 from tracker_mcp.version import (
     GITHUB_REPO,
+    VersionStatus,
     compare,
     current_version,
     latest_release,
@@ -92,17 +93,17 @@ def get_version() -> str:
         lines.append(f"latest release: none published yet ({GITHUB_REPO})")
         return "\n".join(lines)
     latest_norm = latest.lstrip("v")
-    status = compare(current, latest)
-    if status == "up_to_date":
-        lines.append(f"latest release: {latest_norm} — up to date")
-    elif status == "update_available":
-        lines.append(
-            f"latest release: {latest_norm} — update available ({current} → {latest_norm})"
-        )
-    else:
-        lines.append(
-            f"latest release: {latest_norm} — this server is ahead of the latest release"
-        )
+    match compare(current, latest):
+        case VersionStatus.UP_TO_DATE:
+            lines.append(f"latest release: {latest_norm} — up to date")
+        case VersionStatus.UPDATE_AVAILABLE:
+            lines.append(
+                f"latest release: {latest_norm} — update available ({current} → {latest_norm})"
+            )
+        case VersionStatus.AHEAD:
+            lines.append(
+                f"latest release: {latest_norm} — this server is ahead of the latest release"
+            )
     return "\n".join(lines)
 
 

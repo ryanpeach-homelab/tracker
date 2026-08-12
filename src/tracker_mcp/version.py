@@ -7,6 +7,7 @@ from the project's GitHub Releases so the server can report whether it is up to
 date.
 """
 
+import enum
 import importlib.metadata
 import os
 
@@ -66,9 +67,19 @@ def _parse(version: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def compare(current: str, latest: str) -> str:
-    """Compare two versions, returning 'up_to_date', 'update_available', or 'ahead'."""
+class VersionStatus(enum.Enum):
+    """How the running version relates to the latest published release."""
+
+    UP_TO_DATE = enum.auto()
+    UPDATE_AVAILABLE = enum.auto()
+    AHEAD = enum.auto()
+
+
+def compare(current: str, latest: str) -> VersionStatus:
+    """Compare the running version against the latest release."""
     c, latest_parsed = _parse(current), _parse(latest)
     if c == latest_parsed:
-        return "up_to_date"
-    return "update_available" if c < latest_parsed else "ahead"
+        return VersionStatus.UP_TO_DATE
+    if c < latest_parsed:
+        return VersionStatus.UPDATE_AVAILABLE
+    return VersionStatus.AHEAD
