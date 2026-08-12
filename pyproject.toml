@@ -9,6 +9,7 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
     "geoalchemy2>=0.15",
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]

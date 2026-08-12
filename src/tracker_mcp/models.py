@@ -4,6 +4,8 @@ from typing import Any
 
 from geoalchemy2 import Geography
 from geoalchemy2.elements import WKTElement
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from sqlalchemy import CheckConstraint, Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import validates
@@ -84,6 +86,35 @@ def format_frequency(unit: str, count: int) -> str:
     return f"every {count} {unit}s"
 
 
+def validate_json_schema(schema: dict) -> dict:
+    """Validate that ``schema`` is itself a well-formed JSON Schema.
+
+    A unit's ``json_schema`` is used to validate the metadata of every
+    measurement recorded against that unit, so it must be a valid schema to
+    begin with. Draft 2020-12 is used. Returns the schema unchanged on success.
+    """
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as e:
+        raise ValueError(f"Invalid JSON Schema: {e.message}") from e
+    return schema
+
+
+def validate_metadata(schema: dict | None, meta: dict | None) -> None:
+    """Validate a measurement's metadata against a unit's JSON Schema.
+
+    A ``None`` schema means the unit imposes no constraints (anything goes).
+    A ``None`` metadata is treated as an empty object so that ``required``
+    fields are still enforced. Raises ``ValueError`` on a mismatch.
+    """
+    if schema is None:
+        return
+    try:
+        Draft202012Validator(schema).validate(meta if meta is not None else {})
+    except ValidationError as e:
+        raise ValueError(f"metadata does not match unit schema: {e.message}") from e
+
+
 def make_point(latitude: float, longitude: float) -> WKTElement:
     """Build a validated WGS 84 (SRID 4326) point from decimal degrees.
 
@@ -109,6 +140,8 @@ class TrackingKey(SQLModel, table=True):
     )
     name: str = Field(primary_key=True)
     unit: str = Field(foreign_key="tracking_unit.name")
+    # Free-form human description of what this key measures.
+    description: str | None = Field(default=None)
     # Optional tracking frequency, stored as a period unit + positive count.
     # See parse_frequency/format_frequency for the friendly-string mapping.
     frequency_unit: str | None = Field(default=None)
@@ -147,6 +180,14 @@ class TrackingKey(SQLModel, table=True):
 class TrackingUnit(SQLModel, table=True):
     __tablename__ = "tracking_unit"  # pyright: ignore[reportAssignmentType]
     name: str = Field(primary_key=True)
+    # Free-form human description of what this unit measures.
+    description: str | None = Field(default=None)
+    # Optional JSON Schema (Draft 2020-12) validating the metadata of every
+    # measurement recorded against this unit. NULL means no constraint.
+    json_schema: dict | None = Field(
+        default=None,
+        sa_column=Column("json_schema", JSONB, nullable=True),
+    )
 
     @validates("name")
     def _validate_name(self, _key: str, value: str) -> str:
@@ -154,6 +195,12 @@ class TrackingUnit(SQLModel, table=True):
             raise ValueError(
                 f"Invalid unit '{value}' — units must be snake_case, e.g. 'sec', 'ms', 'count'"
             )
+        return value
+
+    @validates("json_schema")
+    def _validate_json_schema(self, _key: str, value: dict | None) -> dict | None:
+        if value is not None:
+            validate_json_schema(value)
         return value
 
 

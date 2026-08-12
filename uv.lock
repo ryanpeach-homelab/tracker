@@ -1438,6 +1438,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "geoalchemy2" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "psycopg2-binary" },
     { name = "sqlmodel" },
 ]
@@ -1454,6 +1455,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "geoalchemy2", specifier = ">=0.15" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "jsonschema", specifier = ">=4.0" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "sqlmodel", specifier = ">=0.0.21" },
 ]
