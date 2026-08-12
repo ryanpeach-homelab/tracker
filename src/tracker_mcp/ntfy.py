@@ -10,7 +10,7 @@ NTFY_URL   ntfy endpoint including the topic, e.g. ``https://ntfy.sh/mytracker``
 
 Optional env vars
 -----------------
-CHECK_INTERVAL   Polling interval in seconds (default: 3600).
+CHECK_INTERVAL   Polling interval in seconds (default: 86400, i.e. once a day).
 """
 
 import asyncio
@@ -26,7 +26,7 @@ from tracker_mcp.models import Tracking, TrackingKey
 NTFY_URL = os.getenv("NTFY_URL")
 if NTFY_URL is None:
     raise KeyError("Please set NTFY_URL environment variable")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "86400"))
 
 log = logging.getLogger(__name__)
 
