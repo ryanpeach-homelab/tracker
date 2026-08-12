@@ -42,3 +42,14 @@ jobs:
         run: uv run alembic upgrade head
       - name: Check migrations match models
         run: uv run alembic check
+
+  docker:
+    # Build the release image on every PR so a broken Dockerfile is caught
+    # before a release tag tries to publish it. Build only — no push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false

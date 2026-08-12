@@ -30,6 +30,7 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 
 | Tool | Description |
 |------|-------------|
+| `get_version()` | Report the running server version and whether a newer release is available |
 | `get_schema()` | Report the table columns and each unit's metadata JSON Schema |
 | `new_key(name, unit, frequency?, description?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) and a description |
 | `update_key(name, unit?, frequency?, description?)` | Update a key's fields (omitted = untouched; `''` clears frequency/description; unit can't be cleared) |
@@ -71,6 +72,52 @@ baseline first so migrations don't try to recreate existing tables:
 ```sh
 uv run alembic stamp 0001_initial_schema
 uv run alembic upgrade head
+```
+
+## Releases
+
+Versions are cut from the `version` field in `pyproject.toml`, which is the
+single source of truth. The `get_version` tool reports the running server's
+version (read from the installed package metadata) and, when the GitHub Releases
+API is reachable, compares it against the latest published release so you can
+tell whether the server is up to date:
+
+```
+tracker 0.2.0
+latest release: 0.2.0 — up to date
+```
+
+If GitHub can't be reached, the current version is still returned with a note
+that the check was skipped. A fork can point the check at its own releases by
+setting `TRACKER_GITHUB_REPO=owner/repo` (default `ryanpeach-homelab/tracker`);
+`TRACKER_RELEASE_CHECK_TIMEOUT` (seconds, default `5`) bounds the API call.
+
+To publish a release, bump the version and push a matching tag:
+
+```sh
+# edit pyproject.toml: version = "0.3.0"
+git commit -am "Release 0.3.0"
+git tag v0.3.0
+git push origin main --tags
+```
+
+The `Release` workflow (`.github/workflows/release.yml`) then:
+
+1. verifies the tag (`v0.3.0`) matches the `pyproject.toml` version, failing the
+   release if they disagree so the version can't drift;
+2. builds the container image from the `Dockerfile` and pushes it to GHCR as
+   `ghcr.io/ryanpeach-homelab/tracker:v0.3.0` and `:latest`;
+3. creates a GitHub Release with auto-generated notes — this is the release
+   `get_version` compares against.
+
+Deploy the published image (supply `DATABASE_URI`, and `NTFY_URL` if you want
+the reminder loop). Run migrations with the same image before starting the
+server:
+
+```sh
+docker run --rm -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest \
+  alembic upgrade head
+docker run -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest
 ```
 
 ## Development
