@@ -108,6 +108,7 @@ class TrackingKey(SQLModel, table=True):
         ),
     )
     name: str = Field(primary_key=True)
+    unit: str = Field(foreign_key="tracking_unit.name")
     # Optional tracking frequency, stored as a period unit + positive count.
     # See parse_frequency/format_frequency for the friendly-string mapping.
     frequency_unit: str | None = Field(default=None)
@@ -160,7 +161,6 @@ class Tracking(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(foreign_key="tracking_key.name", index=True)
     value: float
-    unit: str = Field(foreign_key="tracking_unit.name")
     # WGS 84 (SRID 4326) geographic point — (longitude, latitude) on the earth.
     # spatial_index is left off to keep the schema minimal; add one via a
     # migration if location queries need it.
