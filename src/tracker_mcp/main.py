@@ -138,44 +138,45 @@ def new_key(
 
 
 @mcp.tool()
-def set_key_frequency(name: str, frequency: str | None) -> str:
-    """Set, change, or clear the tracking frequency of an existing key.
+def update_key(
+    name: str,
+    unit: str | None = None,
+    frequency: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Update fields of an existing key. Only the provided fields change.
 
-    Pass a frequency string ('daily', 'weekly', 'monthly', or an 'n weekly' form
-    like 'every 2 weeks' / '3 weekly') to set it, or null/empty to clear it.
-    """
-    unit_count = parse_frequency(frequency) if frequency else None
-    with Session(engine) as session:
-        key = session.get(TrackingKey, name)
-        if key is None:
-            raise ValueError(f"Unknown key '{name}' — register it first with new_key")
-        if unit_count is None:
-            key.frequency_unit, key.frequency_count = None, None
-        else:
-            key.frequency_unit, key.frequency_count = unit_count
-        session.add(key)
-        session.commit()
-        if key.frequency:
-            return f"Set frequency of '{name}' to {key.frequency}"
-        return f"Cleared frequency of '{name}'"
+    Any argument left as null/omitted is untouched. To clear an optional field,
+    pass an empty value: '' clears the frequency or description. unit, if given,
+    must already be registered via new_unit and cannot be cleared.
 
-
-@mcp.tool()
-def set_key_description(name: str, description: str | None) -> str:
-    """Set, change, or clear the free-form description of an existing key.
-
-    Pass a description string to set it, or null/empty to clear it.
+    frequency accepts 'daily'/'weekly'/'monthly' or an 'n weekly' form like
+    'every 2 weeks' / '3 weekly'.
     """
     with Session(engine) as session:
         key = session.get(TrackingKey, name)
         if key is None:
             raise ValueError(f"Unknown key '{name}' — register it first with new_key")
-        key.description = description or None
+        changed: list[str] = []
+        if unit is not None:
+            if not session.get(TrackingUnit, unit):
+                raise ValueError(
+                    f"Unknown unit '{unit}' — register it first with new_unit"
+                )
+            key.unit = unit
+            changed.append(f"unit={unit}")
+        if frequency is not None:
+            unit_count = parse_frequency(frequency) if frequency else None
+            key.frequency_unit, key.frequency_count = unit_count or (None, None)
+            changed.append(f"frequency={key.frequency or 'cleared'}")
+        if description is not None:
+            key.description = description or None
+            changed.append(f"description={'cleared' if not key.description else 'set'}")
+        if not changed:
+            return f"No changes for key '{name}'"
         session.add(key)
         session.commit()
-        if key.description:
-            return f"Set description of '{name}'"
-        return f"Cleared description of '{name}'"
+        return f"Updated key '{name}': {', '.join(changed)}"
 
 
 @mcp.tool()
@@ -203,45 +204,39 @@ def new_unit(
 
 
 @mcp.tool()
-def set_unit_json_schema(name: str, json_schema: dict | None) -> str:
-    """Set, change, or clear the metadata JSON Schema of an existing unit.
+def update_unit(
+    name: str,
+    description: str | None = None,
+    json_schema: dict | None = None,
+) -> str:
+    """Update fields of an existing unit. Only the provided fields change.
 
-    Pass a JSON Schema (Draft 2020-12) object to constrain the metadata of
-    measurements recorded against this unit, or null to remove the constraint.
-    The schema itself is validated for well-formedness. Existing measurements
-    are not re-validated.
+    Any argument left as null/omitted is untouched. To clear an optional field,
+    pass an empty value: '' clears the description, {} clears the metadata JSON
+    Schema. A provided json_schema (Draft 2020-12) is validated for
+    well-formedness; existing measurements are not re-validated.
     """
-    if json_schema is not None:
+    if json_schema:
         # Fail fast with a clear error before touching the row.
         validate_json_schema(json_schema)
     with Session(engine) as session:
         unit = session.get(TrackingUnit, name)
         if unit is None:
             raise ValueError(f"Unknown unit '{name}' — register it first with new_unit")
-        unit.json_schema = json_schema
+        changed: list[str] = []
+        if description is not None:
+            unit.description = description or None
+            changed.append(
+                f"description={'cleared' if not unit.description else 'set'}"
+            )
+        if json_schema is not None:
+            unit.json_schema = json_schema or None
+            changed.append(f"schema={'cleared' if not unit.json_schema else 'set'}")
+        if not changed:
+            return f"No changes for unit '{name}'"
         session.add(unit)
         session.commit()
-        if unit.json_schema is not None:
-            return f"Set metadata schema of unit '{name}'"
-        return f"Cleared metadata schema of unit '{name}'"
-
-
-@mcp.tool()
-def set_unit_description(name: str, description: str | None) -> str:
-    """Set, change, or clear the free-form description of an existing unit.
-
-    Pass a description string to set it, or null/empty to clear it.
-    """
-    with Session(engine) as session:
-        unit = session.get(TrackingUnit, name)
-        if unit is None:
-            raise ValueError(f"Unknown unit '{name}' — register it first with new_unit")
-        unit.description = description or None
-        session.add(unit)
-        session.commit()
-        if unit.description:
-            return f"Set description of '{name}'"
-        return f"Cleared description of '{name}'"
+        return f"Updated unit '{name}': {', '.join(changed)}"
 
 
 @mcp.tool()

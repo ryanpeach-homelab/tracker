@@ -32,12 +32,10 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 |------|-------------|
 | `get_schema()` | Report the table columns and each unit's metadata JSON Schema |
 | `new_key(name, unit, frequency?, description?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) and a description |
-| `set_key_frequency(name, frequency)` | Set, change, or clear a key's tracking frequency (null/empty clears it) |
-| `set_key_description(name, description)` | Set, change, or clear a key's description (null/empty clears it) |
+| `update_key(name, unit?, frequency?, description?)` | Update a key's fields (omitted = untouched; `''` clears frequency/description; unit can't be cleared) |
 | `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
 | `new_unit(name, description?, json_schema?)` | Register a measurement unit, optionally with a description and a metadata JSON Schema |
-| `set_unit_description(name, description)` | Set, change, or clear a unit's description (null/empty clears it) |
-| `set_unit_json_schema(name, json_schema)` | Set, change, or clear a unit's metadata JSON Schema (null clears it) |
+| `update_unit(name, description?, json_schema?)` | Update a unit's fields (omitted = untouched; `''` clears the description, `{}` clears the schema) |
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |
