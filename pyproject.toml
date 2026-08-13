@@ -1,9 +1,9 @@
 [project]
 name = "tracker"
-# No hardcoded version here. The build reads a placeholder from
-# tracker_mcp.__version__ (see [tool.hatch.version]); the *running* server
-# reports the TRACKER_VERSION env var baked into the image from the release tag.
-dynamic = ["version"]
+# Placeholder to satisfy packaging only — not the runtime version. The running
+# server reports the TRACKER_VERSION env var baked into the image from the
+# release tag (see get_version). Git tags are the source of truth for releases.
+version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=2.0",
@@ -21,12 +21,6 @@ tracker = "tracker_mcp.main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-# Satisfy the build's version requirement from a placeholder in the package,
-# using hatchling's built-in source (no extra dependency). This value is not the
-# source of truth at runtime — get_version reports TRACKER_VERSION instead.
-[tool.hatch.version]
-path = "src/tracker_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tracker_mcp"]
