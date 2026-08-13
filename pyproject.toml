@@ -1,6 +1,9 @@
 [project]
 name = "tracker"
-version = "0.2.1"
+# Placeholder to satisfy packaging only — not the runtime version. The running
+# server reports the TRACKER_VERSION env var baked into the image from the
+# release tag (see get_version). Git tags are the source of truth for releases.
+version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=2.0",

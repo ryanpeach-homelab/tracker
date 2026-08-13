@@ -1,23 +1,23 @@
 name: Release
 
-# Versioning is automatic. Every PR carries exactly one bump label
-# (major / minor / patch) — enforced by the "PR Labels" workflow. When a PR is
-# merged into the default branch, this workflow bumps the version accordingly,
-# commits and tags it, publishes the container image to GHCR, and cuts a GitHub
-# Release. The running server's `get_version` tool compares itself against that
-# release, so you can always tell whether a server is up to date.
+# Releasing is just pushing a git tag — nothing writes back to the default
+# branch, so branch protection needs no exceptions. On every merged PR, the next
+# version is computed from the latest tag and the PR's bump label (major / minor
+# / patch, enforced by the "PR Labels" workflow), then this workflow tags it,
+# publishes the container image to GHCR, and cuts a GitHub Release. The running
+# server reports that version via TRACKER_VERSION, so `get_version` can tell you
+# whether a server is up to date.
 on:
   pull_request:
     types: [closed]
 
 permissions:
-  contents: write # push the version-bump commit + tag, create the Release
+  contents: write # push the tag, create the Release
   packages: write # push the image to GHCR
 
 jobs:
   release:
-    # Only on a real merge into the default branch — closed-without-merge and
-    # merges into other branches don't release.
+    # Only on a real merge into the default branch.
     if: >-
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
@@ -25,11 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Land on the branch tip so the bump commit fast-forwards cleanly.
+          # Tip of the default branch (includes the just-merged PR), with full
+          # history + tags so we can find the latest version tag.
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
-
-      - uses: astral-sh/setup-uv@v5
 
       - name: Determine bump level from PR labels
         id: bump
@@ -47,22 +46,33 @@ jobs:
           )"
           echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
 
-      - name: Bump version
+      - name: Compute next version from latest tag
         id: version
-        # uv updates both pyproject.toml and uv.lock so the version stays a
-        # single source of truth — this is what get_version reports.
+        env:
+          LEVEL: ${{ steps.bump.outputs.level }}
         run: |
-          uv version --bump "${{ steps.bump.outputs.level }}"
-          echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+          LATEST="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          VERSION="$(python3 - <<'PY'
+          import os
+          latest = os.environ.get("LATEST", "").lstrip("v")
+          major, minor, patch = (list(int(p) for p in latest.split(".")[:3]) + [0, 0, 0])[:3] if latest else (0, 0, 0)
+          level = os.environ["LEVEL"]
+          if level == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif level == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          print(f"{major}.{minor}.{patch}")
+          PY
+          )"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION (from ${LATEST:-<no tags>}, ${LEVEL} bump)"
 
-      - name: Commit, tag and push
+      - name: Tag the release
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release v${VERSION}"
           git tag "v${VERSION}"
-          git push origin HEAD:"${{ github.event.repository.default_branch }}"
           git push origin "v${VERSION}"
 
       - name: Log in to GHCR
@@ -77,12 +87,14 @@ jobs:
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Build and push image
-        # Built from the working tree, which now holds the bumped version, so
-        # the image's get_version reports the version it is tagged with.
+        # VERSION build arg becomes TRACKER_VERSION in the image, which is what
+        # get_version reports — so the image reports the tag it's published under.
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           tags: |
             ${{ env.IMAGE }}:v${{ steps.version.outputs.version }}
             ${{ env.IMAGE }}:latest
