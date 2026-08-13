@@ -51,7 +51,11 @@ jobs:
         env:
           LEVEL: ${{ steps.bump.outputs.level }}
         run: |
-          LATEST="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          # Query tags straight from the remote so this never depends on what
+          # the checkout fetched locally (fetch-depth/fetch-tags quirks have
+          # produced an empty local tag list, which mis-computes the version).
+          LATEST="$(git ls-remote --tags --refs origin 'v*' \
+            | awk -F/ '{print $NF}' | sort -V | tail -n1)"
           VERSION="$(python3 - <<'PY'
           import os
           latest = os.environ.get("LATEST", "").lstrip("v")
