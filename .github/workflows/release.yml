@@ -4,16 +4,18 @@ name: Release
 # branch, so branch protection needs no exceptions. On every merged PR, the next
 # version is computed from the latest tag and the PR's bump label (major / minor
 # / patch, enforced by the "PR Labels" workflow), then this workflow tags it,
-# publishes the container image to GHCR, and cuts a GitHub Release. The running
-# server reports that version via TRACKER_VERSION, so `get_version` can tell you
-# whether a server is up to date.
+# publishes the container image to Docker Hub, and cuts a GitHub Release. The
+# running server reports that version via TRACKER_VERSION, so `get_version` can
+# tell you whether a server is up to date.
+#
+# Requires a repository secret DOCKERHUB_TOKEN (a Docker Hub access token for the
+# rgpeach10 account with write access to the rgpeach10/tracker repository).
 on:
   pull_request:
     types: [closed]
 
 permissions:
   contents: write # push the tag, create the Release
-  packages: write # push the image to GHCR
 
 jobs:
   release:
@@ -79,16 +81,11 @@ jobs:
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set image name (lowercase)
-        # GHCR requires a lowercase repository path.
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          username: rgpeach10
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push image
         # VERSION build arg becomes TRACKER_VERSION in the image, which is what
@@ -100,8 +97,8 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
           tags: |
-            ${{ env.IMAGE }}:v${{ steps.version.outputs.version }}
-            ${{ env.IMAGE }}:latest
+            rgpeach10/tracker:v${{ steps.version.outputs.version }}
+            rgpeach10/tracker:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

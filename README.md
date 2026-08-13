@@ -114,7 +114,7 @@ its bump. On merge into the default branch, the **Release** workflow
 2. pushes the new `vX.Y.Z` tag (nothing else is written to the repo);
 3. builds the container image from the `Dockerfile`, passing the version as the
    `VERSION` build arg (which becomes `TRACKER_VERSION` in the image), and pushes
-   it to GHCR as `ghcr.io/ryanpeach-homelab/tracker:vX.Y.Z` and `:latest`;
+   it to Docker Hub as `rgpeach10/tracker:vX.Y.Z` and `:latest`;
 4. creates a GitHub Release with auto-generated notes — this is the release
    `get_version` compares against.
 
@@ -123,11 +123,14 @@ default branch — branch protection ("changes must go through a PR") can stay
 fully locked with no bypass. The three labels must exist in the repository
 (create `major`, `minor`, and `patch` once under **Issues → Labels**), and you
 can make **PR Labels** a required status check so an unlabeled PR can't merge.
+Publishing to Docker Hub needs a `DOCKERHUB_TOKEN` repository secret — a Docker
+Hub access token for the `rgpeach10` account with write access to the
+`rgpeach10/tracker` repository.
 
-The version lives only in tags: `pyproject.toml` declares `dynamic = ["version"]`
-and the build reads a throwaway placeholder from `tracker_mcp.__version__` just
-to satisfy packaging. Neither is the running version — that is always
-`TRACKER_VERSION`.
+The version is not committed anywhere meaningful: `pyproject.toml` carries a
+static `version = "0.0.0"` placeholder purely to satisfy the package build. It
+is not the running version — that is always `TRACKER_VERSION`, and git tags are
+the source of truth for releases.
 
 ### Deploying a release
 
@@ -136,9 +139,9 @@ the reminder loop). Run migrations with the same image before starting the
 server:
 
 ```sh
-docker run --rm -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest \
+docker run --rm -e DATABASE_URI=... rgpeach10/tracker:latest \
   alembic upgrade head
-docker run -e DATABASE_URI=... ghcr.io/ryanpeach-homelab/tracker:latest
+docker run -e DATABASE_URI=... rgpeach10/tracker:latest
 ```
 
 ## Development
