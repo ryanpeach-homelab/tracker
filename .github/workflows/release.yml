@@ -86,7 +86,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           username: rgpeach10
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push image
         # VERSION build arg becomes TRACKER_VERSION in the image, which is what
