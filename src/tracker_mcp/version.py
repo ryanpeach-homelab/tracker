@@ -1,10 +1,14 @@
 """Version reporting for the tracker MCP server.
 
-The running version is read from the installed package metadata; the single
-source of truth is the ``version`` field in ``pyproject.toml`` (baked into the
-distribution at build time). Optionally, the latest published version is fetched
-from the project's GitHub Releases so the server can report whether it is up to
-date.
+The running version comes from the ``TRACKER_VERSION`` environment variable,
+which the container image bakes in at build time from the release tag (see the
+Dockerfile and the release workflow). Releases are git tags — that is the single
+source of truth — so nothing writes a version back into the repository.
+
+When ``TRACKER_VERSION`` is unset (e.g. a local ``uv run`` from source), we fall
+back to the installed package metadata, then to a sentinel. Optionally, the
+latest published version is fetched from the project's GitHub Releases so the
+server can report whether it is up to date.
 """
 
 import enum
@@ -15,6 +19,10 @@ import httpx
 
 PACKAGE_NAME = "tracker"
 
+# Env var carrying the running server's version, baked into the image at build
+# time from the release tag. This is the authoritative runtime version.
+VERSION_ENV = "TRACKER_VERSION"
+
 # owner/repo whose GitHub Releases represent the canonical published versions.
 # Overridable so a fork can point the up-to-date check at its own releases.
 GITHUB_REPO = os.getenv("TRACKER_GITHUB_REPO", "ryanpeach-homelab/tracker")
@@ -24,7 +32,15 @@ RELEASE_CHECK_TIMEOUT = float(os.getenv("TRACKER_RELEASE_CHECK_TIMEOUT", "5"))
 
 
 def current_version() -> str:
-    """Return the installed tracker version, or a sentinel if not installed."""
+    """Return the running tracker version.
+
+    Prefers ``TRACKER_VERSION`` (set in the image from the release tag); falls
+    back to the installed package metadata, then to a sentinel for source runs
+    where neither is meaningful.
+    """
+    env_version = os.getenv(VERSION_ENV)
+    if env_version:
+        return env_version
     try:
         return importlib.metadata.version(PACKAGE_NAME)
     except importlib.metadata.PackageNotFoundError:

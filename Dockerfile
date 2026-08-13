@@ -1,10 +1,15 @@
 # Container image for the tracker MCP server.
 #
-# The version reported by the `get_version` tool comes from the installed
-# package metadata, so it is baked in from pyproject.toml at build time.
-# Provide DATABASE_URI (and optionally NTFY_URL) at runtime. Run migrations
-# separately: `docker run ... tracker-image alembic upgrade head`.
+# The version reported by the `get_version` tool comes from the TRACKER_VERSION
+# env var, set here from the VERSION build arg (the release workflow passes the
+# release tag). Provide DATABASE_URI (and optionally NTFY_URL) at runtime. Run
+# migrations separately: `docker run ... tracker-image alembic upgrade head`.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# The release tag, e.g. "0.3.0". Defaults to "dev" for local/CI builds that
+# don't pass it, so `docker build .` still works.
+ARG VERSION=dev
+ENV TRACKER_VERSION=$VERSION
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
