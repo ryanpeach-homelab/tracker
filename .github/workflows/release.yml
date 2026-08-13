@@ -58,20 +58,21 @@ jobs:
           # produced an empty local tag list, which mis-computes the version).
           LATEST="$(git ls-remote --tags --refs origin 'v*' \
             | awk -F/ '{print $NF}' | sort -V | tail -n1)"
-          VERSION="$(python3 - <<'PY'
-          import os
-          latest = os.environ.get("LATEST", "").lstrip("v")
-          major, minor, patch = (list(int(p) for p in latest.split(".")[:3]) + [0, 0, 0])[:3] if latest else (0, 0, 0)
-          level = os.environ["LEVEL"]
-          if level == "major":
-              major, minor, patch = major + 1, 0, 0
-          elif level == "minor":
-              minor, patch = minor + 1, 0
-          else:
-              patch += 1
-          print(f"{major}.{minor}.{patch}")
-          PY
-          )"
+          # Split the latest tag into numeric components (defaulting to 0.0.0
+          # when there are no tags yet), then bump per the label. Pure bash so
+          # there's no subprocess-environment step to leak the variable through.
+          base="${LATEST#v}"
+          IFS=. read -r major minor patch <<EOF
+          ${base:-0.0.0}
+          EOF
+          major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
+          case "$LEVEL" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::unknown bump level '$LEVEL'"; exit 1 ;;
+          esac
+          VERSION="${major}.${minor}.${patch}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (from ${LATEST:-<no tags>}, ${LEVEL} bump)"
 
