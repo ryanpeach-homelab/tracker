@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from sqlmodel import Session, col, select
 
-from tracker_mcp.models import Tracking, TrackingKey
+from tracker_mcp.models import Tracking, TrackingKey, to_utc
 
 NTFY_URL = os.getenv("NTFY_URL")
 if NTFY_URL is None:
@@ -37,14 +37,6 @@ def _period(unit: str, count: int) -> timedelta:
     if unit == "week":
         return timedelta(weeks=count)
     return timedelta(days=30 * count)  # month: approximate
-
-
-def _as_utc(dt: datetime) -> datetime:
-    return (
-        dt.replace(tzinfo=timezone.utc)
-        if dt.tzinfo is None
-        else dt.astimezone(timezone.utc)
-    )
 
 
 def find_overdue(engine: object) -> list[tuple[TrackingKey, datetime | None]]:
@@ -64,7 +56,7 @@ def find_overdue(engine: object) -> list[tuple[TrackingKey, datetime | None]]:
                 .order_by(col(Tracking.created_at).desc())
                 .limit(1)
             ).first()
-            last_at = _as_utc(last.created_at) if last is not None else None
+            last_at = to_utc(last.created_at) if last is not None else None
             if last_at is None or last_at < deadline:
                 overdue.append((key, last_at))
     return overdue
