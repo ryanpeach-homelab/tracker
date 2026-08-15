@@ -16,6 +16,7 @@ from tracker_mcp.models import (
     TrackingUnit,
     make_point,
     parse_frequency,
+    to_utc,
     validate_json_schema,
     validate_metadata,
 )
@@ -407,6 +408,7 @@ def insert(
     longitude: float | None = None,
     meta: dict | None = None,
     description: str | None = None,
+    created_at: datetime | None = None,
 ) -> str:
     """Insert a measurement. key must be registered first via new_key (unit is on the key).
 
@@ -415,6 +417,9 @@ def insert(
     passing both latitude and longitude (WGS 84 decimal degrees). Optionally
     attach a free-form description — a per-reading note distinct from the
     structured meta.
+
+    Pass created_at (ISO 8601) to backdate the measurement; omitted, it defaults
+    to now. A naive timestamp is treated as UTC, an aware one is converted to UTC.
     """
     if (latitude is None) != (longitude is None):
         raise ValueError("latitude and longitude must be provided together")
@@ -437,6 +442,8 @@ def insert(
             meta=meta,
             description=description,
         )
+        if created_at is not None:
+            row.created_at = to_utc(created_at)
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -452,6 +459,7 @@ def insert_batch(
     latitude: float | None = None,
     longitude: float | None = None,
     meta: dict | None = None,
+    created_at: datetime | None = None,
 ) -> str:
     """Insert many measurements that share one location, timestamp, and metadata.
 
@@ -461,6 +469,9 @@ def insert_batch(
     latitude/longitude, WGS 84 decimal degrees), the same created_at timestamp,
     and the same metadata. The batch is inserted atomically — if any key or unit
     is unknown, nothing is written.
+
+    Pass created_at (ISO 8601) to backdate the whole batch; omitted, it defaults
+    to now. A naive timestamp is treated as UTC, an aware one is converted to UTC.
     """
     if not measurements:
         raise ValueError("measurements must not be empty")
@@ -472,7 +483,9 @@ def insert_batch(
         if latitude is not None and longitude is not None
         else None
     )
-    created_at = datetime.now(timezone.utc)
+    created_at = (
+        to_utc(created_at) if created_at is not None else datetime.now(timezone.utc)
+    )
     with Session(engine) as session:
         # Validate every distinct key up front so the whole batch fails
         # fast and atomically rather than part-way through. The shared metadata
@@ -510,6 +523,7 @@ def update_item(
     longitude: float | None = None,
     meta: dict | None = None,
     description: str | None = None,
+    created_at: datetime | None = None,
 ) -> str:
     """Update fields of an existing measurement identified by id.
 
@@ -518,6 +532,8 @@ def update_item(
     if given, must already be registered via new_key. Pass both latitude and
     longitude together to move the measurement's geocoordinate (WGS 84 decimal
     degrees). Pass description to set the per-reading note, or '' to clear it.
+    Pass created_at (ISO 8601) to backdate the measurement; a naive timestamp is
+    treated as UTC, an aware one is converted to UTC.
     """
     if (latitude is None) != (longitude is None):
         raise ValueError("latitude and longitude must be provided together")
@@ -541,6 +557,8 @@ def update_item(
         if description is not None:
             # '' clears the note; any other string sets it.
             row.description = description or None
+        if created_at is not None:
+            row.created_at = to_utc(created_at)
         # If the key or metadata changed, re-validate the effective metadata
         # against the (possibly new) unit's JSON Schema.
         if key is not None or meta is not None:

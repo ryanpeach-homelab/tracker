@@ -26,6 +26,8 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 
 `location` is an optional [PostGIS](https://postgis.net/) `geography(Point,4326)` — a WGS 84 geocoordinate for where a measurement was taken (requires the `postgis` extension, which the migration enables). Build one with `make_point(latitude, longitude)` from `tracker_mcp.models`, which validates the coordinate ranges; `insert` takes plain `latitude`/`longitude` decimal degrees.
 
+`created_at` defaults to the moment of insertion, but every write path accepts an explicit timestamp so measurements can be **backdated**: `insert`, `insert_batch`, and `update_item` take an optional `created_at` (ISO 8601). Timestamps are normalized to UTC by `to_utc` in `tracker_mcp.models` — a naive value is assumed to already be UTC, an aware one is converted — so the reminder loop's overdue math stays consistent regardless of how the time was supplied.
+
 ## Tools
 
 | Tool | Description |
@@ -40,9 +42,9 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |
-| `insert(key, value, latitude?, longitude?, meta?, description?)` | Append a measurement row, optionally with a per-reading description |
-| `insert_batch(measurements, latitude?, longitude?, meta?)` | Append many rows sharing one location, timestamp, and metadata (each measurement may carry its own description) |
-| `update_item(id, key?, value?, latitude?, longitude?, meta?, description?)` | Update fields of an existing measurement by `id` (only provided fields change; `''` clears the description) |
+| `insert(key, value, latitude?, longitude?, meta?, description?, created_at?)` | Append a measurement row, optionally with a per-reading description; pass `created_at` (ISO 8601) to backdate it |
+| `insert_batch(measurements, latitude?, longitude?, meta?, created_at?)` | Append many rows sharing one location, timestamp, and metadata (each measurement may carry its own description); pass `created_at` (ISO 8601) to backdate the batch |
+| `update_item(id, key?, value?, latitude?, longitude?, meta?, description?, created_at?)` | Update fields of an existing measurement by `id` (only provided fields change; `''` clears the description; `created_at` backdates it) |
 | `delete_item(id)` | Delete a measurement by `id` |
 | `query(sql)` | Read-only `SELECT` against the tracking database |
 

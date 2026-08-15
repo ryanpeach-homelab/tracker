@@ -115,6 +115,20 @@ def validate_metadata(schema: dict | None, meta: dict | None) -> None:
         raise ValueError(f"metadata does not match unit schema: {e.message}") from e
 
 
+def to_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to an aware UTC datetime.
+
+    A naive datetime is assumed to already be in UTC; an aware one is converted.
+    Lives here in the models module so every write path shares one timestamp
+    normalization, matching where ``created_at`` is defaulted.
+    """
+    return (
+        dt.replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None
+        else dt.astimezone(timezone.utc)
+    )
+
+
 def make_point(latitude: float, longitude: float) -> WKTElement:
     """Build a validated WGS 84 (SRID 4326) point from decimal degrees.
 
