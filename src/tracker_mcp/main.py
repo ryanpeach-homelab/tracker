@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from fastmcp import FastMCP
 from pydantic import BaseModel
-from sqlalchemy import text, update
+from sqlalchemy import delete, func, text, update
 from sqlmodel import Session, col, create_engine, select
 
 from tracker_mcp.models import (
@@ -361,6 +361,79 @@ def rename_unit(old_name: str, new_name: str) -> str:
         session.delete(session.get(TrackingUnit, old_name))
         session.commit()
     return f"Renamed unit '{old_name}' → '{new_name}' ({rowcount} key(s) updated)"
+
+
+@mcp.tool()
+def delete_key(name: str, cascade: bool = False) -> str:
+    """Delete a measurement key.
+
+    If any measurements are recorded against the key, the delete is refused
+    unless cascade=True, in which case those measurements are deleted too.
+    Everything happens in one transaction.
+    """
+    with Session(engine) as session:
+        key = session.get(TrackingKey, name)
+        if key is None:
+            raise ValueError(f"Unknown key '{name}'")
+        count = session.exec(
+            select(func.count()).select_from(Tracking).where(col(Tracking.key) == name)
+        ).one()
+        if count and not cascade:
+            raise ValueError(
+                f"Key '{name}' has {count} measurement(s) — pass cascade=True "
+                "to delete them along with the key"
+            )
+        # The tracking.key FK has no ON DELETE CASCADE, so remove the
+        # measurements explicitly before the key.
+        session.exec(delete(Tracking).where(col(Tracking.key) == name))
+        session.delete(key)
+        session.commit()
+    return f"Deleted key '{name}' ({count} measurement(s) deleted)"
+
+
+@mcp.tool()
+def delete_unit(name: str, cascade: bool = False) -> str:
+    """Delete a measurement unit.
+
+    If any keys use the unit, the delete is refused unless cascade=True, in
+    which case those keys — and every measurement recorded against them — are
+    deleted too. Everything happens in one transaction.
+    """
+    with Session(engine) as session:
+        unit = session.get(TrackingUnit, name)
+        if unit is None:
+            raise ValueError(f"Unknown unit '{name}'")
+        key_names = list(
+            session.exec(
+                select(TrackingKey.name).where(col(TrackingKey.unit) == name)
+            ).all()
+        )
+        measurement_count = (
+            session.exec(
+                select(func.count())
+                .select_from(Tracking)
+                .where(col(Tracking.key).in_(key_names))
+            ).one()
+            if key_names
+            else 0
+        )
+        if key_names and not cascade:
+            raise ValueError(
+                f"Unit '{name}' is used by {len(key_names)} key(s) "
+                f"({', '.join(sorted(key_names))}) with {measurement_count} "
+                "measurement(s) — pass cascade=True to delete them along with the unit"
+            )
+        # Neither FK has ON DELETE CASCADE, so delete bottom-up:
+        # measurements → keys → unit.
+        if key_names:
+            session.exec(delete(Tracking).where(col(Tracking.key).in_(key_names)))
+            session.exec(delete(TrackingKey).where(col(TrackingKey.unit) == name))
+        session.delete(unit)
+        session.commit()
+    return (
+        f"Deleted unit '{name}' ({len(key_names)} key(s), "
+        f"{measurement_count} measurement(s) deleted)"
+    )
 
 
 @mcp.tool()

@@ -37,9 +37,11 @@ A unit can carry an optional **metadata `json_schema`** — a [JSON Schema](http
 | `new_key(name, unit, frequency?, description?)` | Register a measurement key, optionally with a tracking frequency (`daily`/`weekly`/`monthly`/`n weekly`) and a description |
 | `update_key(name, unit?, frequency?, description?)` | Update a key's fields (omitted = untouched; `''` clears frequency/description; unit can't be cleared) |
 | `rename_key(old_name, new_name)` | Rename a key, repointing its measurements |
+| `delete_key(name, cascade?)` | Delete a key; refused if it has measurements unless `cascade=true`, which deletes them too |
 | `new_unit(name, description?, json_schema?)` | Register a measurement unit, optionally with a description and a metadata JSON Schema |
 | `update_unit(name, description?, json_schema?)` | Update a unit's fields (omitted = untouched; `''` clears the description, `{}` clears the schema) |
 | `rename_unit(old_name, new_name)` | Rename a unit, repointing its measurements |
+| `delete_unit(name, cascade?)` | Delete a unit; refused if any keys use it unless `cascade=true`, which deletes those keys and their measurements too |
 | `list_keys()` | List all registered keys |
 | `list_units()` | List all registered units |
 | `insert(key, value, latitude?, longitude?, meta?, description?, created_at?)` | Append a measurement row, optionally with a per-reading description; pass `created_at` (ISO 8601) to backdate it |
